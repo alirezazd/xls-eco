@@ -47,6 +47,7 @@
 #include "llvm/include/llvm/Support/raw_ostream.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/include/mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/include/mlir/IR/BuiltinAttributes.h"
 #include "mlir/include/mlir/IR/BuiltinOps.h"
 #include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
@@ -62,12 +63,14 @@
 #include "mlir/include/mlir/Support/DebugStringHelper.h"
 #include "mlir/include/mlir/Support/LLVM.h"
 #include "mlir/include/mlir/Support/LogicalResult.h"
+#include "mlir/include/mlir/Transforms/DialectConversion.h"
 #include "mlir/include/mlir/Transforms/Passes.h"
 #include "xls/codegen/vast/vast.h"
 #include "xls/codegen/xls_metrics.pb.h"
 #include "xls/common/file/filesystem.h"
 #include "xls/common/file/get_runfile_path.h"
 #include "xls/contrib/mlir/IR/xls_ops.h"
+#include "xls/contrib/mlir/transforms/arith_to_xls.h"
 #include "xls/contrib/mlir/util/conversion_utils.h"
 #include "xls/ir/bits.h"
 #include "xls/ir/channel.h"
@@ -1775,6 +1778,29 @@ LogicalResult MlirXlsToXlsTranslate(Operation* op, llvm::raw_ostream& output,
     pm.addPass(createSymbolDCEPass());
     if (pm.run(op).failed()) {
       return op->emitError("Failed to run SymbolDCE pass");
+    }
+  }
+
+  // Apply arith-to-xls patterns before translation
+  {
+    ConversionTarget target(*op->getContext());
+    target.addIllegalDialect<mlir::arith::ArithDialect>();
+    target.addLegalDialect<mlir::func::FuncDialect, mlir::tensor::TensorDialect,
+                           XlsDialect>();
+    target.addLegalOp<mlir::arith::BitcastOp, mlir::arith::IndexCastOp,
+                      mlir::arith::IndexCastUIOp>();
+    // `ConstantOp` with index value is allowed, as it is required by
+    // `tensor.extract`/`insert`.
+    target.addDynamicallyLegalOp<mlir::arith::ConstantOp>(
+        [](mlir::arith::ConstantOp op) {
+          return mlir::getElementTypeOrSelf(op.getValue()).isIndex();
+        });
+    
+    RewritePatternSet patterns(op->getContext());
+    ::mlir::populateArithToXlsPatterns(patterns, op->getContext());
+    
+    if (failed(mlir::applyPartialConversion(op, target, std::move(patterns)))) {
+      return op->emitError("Failed to apply arith-to-xls patterns");
     }
   }
 
