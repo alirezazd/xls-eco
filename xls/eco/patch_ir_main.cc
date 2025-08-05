@@ -55,7 +55,7 @@ ABSL_FLAG(std::optional<std::string>, input_schedule_path, std::nullopt,
 namespace xls {
 static absl::StatusOr<PipelineSchedule> PipelineScheduleFromProto(
     FunctionBase* function,
-    const PackagePipelineSchedulesProto& package_schedules_proto) {
+    const PackageScheduleProto& package_schedules_proto) {
   // This the modified version of PipelineSchedule::FromProto that ignores
   // extra nodes in the proto.
   const auto schedule_it =
@@ -95,8 +95,8 @@ static absl::Status RealMain(
   PatchIr patch_ir(function_base, patch);
   XLS_RETURN_IF_ERROR(patch_ir.ApplyPatch());
   if (absl::GetFlag(FLAGS_input_schedule_path).has_value()) {
-    XLS_ASSIGN_OR_RETURN(PackagePipelineSchedulesProto schedule_proto,
-                         ParseTextProtoFile<PackagePipelineSchedulesProto>(
+    XLS_ASSIGN_OR_RETURN(PackageScheduleProto schedule_proto,
+                         ParseTextProtoFile<PackageScheduleProto>(
                              absl::GetFlag(FLAGS_input_schedule_path).value()));
     XLS_ASSIGN_OR_RETURN(
         schedule, PipelineScheduleFromProto(function_base, schedule_proto));

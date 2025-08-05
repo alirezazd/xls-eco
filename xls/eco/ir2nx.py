@@ -234,8 +234,8 @@ class IrParser:
     end_index = line.rfind(")")  # Find the last closing parenthesis
     line = line[start_index:end_index]
     params = self._split_params(line)
-    for param in params:
-      self._parse_param(param)
+    for i, param in enumerate(params):
+      self._parse_param(param, i)
 
   def _parse_top_proc(self, line):
     """Parses a line representing a top proc in the IR format and adds it to the graph.
@@ -376,7 +376,7 @@ class IrParser:
         color=self.node_colors["LT"],
     )
 
-  def _parse_param(self, param_str):
+  def _parse_param(self, param_str, index):
     """Parses a line representing a param node in the IR format and adds it to the graph."""
     id_idx = param_str.find("id=")
     id_str = None
@@ -392,9 +392,11 @@ class IrParser:
         op=op,
         data_type=data_type,
         id=int(id_str) if id_str is not None else None,
+        index=index,
         cost_attributes={
             "op": op,
             "dtype_str": data_type_str,
+            "index": index,
         },
         color=self.node_colors["P"],
     )

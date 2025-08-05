@@ -570,6 +570,11 @@ absl::Status PatchIr::ApplyUpdatePath(
     const xls_eco::NodeEditPathProto& node_update) {
   patch_to_ir_node_map_[node_update.updated_node().name()] =
       node_update.node().name();
+  XLS_ASSIGN_OR_RETURN(Node * n,
+                       function_base_->GetNode(node_update.node().name()));
+  if (function_base_->IsFunction() && function_base_->HasImplicitUse(n)) {
+    XLS_RETURN_IF_ERROR(IsolateReturnNode());
+  }
   return absl::OkStatus();
 }
 absl::Status PatchIr::ApplyUpdatePath(
@@ -705,12 +710,9 @@ absl::Status PatchIr::ExportScheduleProto() {
       GetSchedulingOptionsFlagsProto());
   XLS_ASSIGN_OR_RETURN(DelayEstimator * delay_estimator,
                        SetUpDelayEstimator(scheduling_options_flags_proto));
-  PackagePipelineSchedules package_pipeline_schedules = {
-      {function_base_, schedule_.value()}};
   XLS_RETURN_IF_ERROR(
       SetTextProtoFile(absl::GetFlag(FLAGS_output_schedule_path),
-                       PackagePipelineSchedulesToProto(
-                           package_pipeline_schedules, *delay_estimator)));
+                       schedule_->ToProto(*delay_estimator)));
   return absl::OkStatus();
 }
 bool PatchIr::CompareEditPaths(const xls_eco::EditPathProto& lhs,
