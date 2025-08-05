@@ -200,6 +200,7 @@ cc_library(
 cc_library(
     name = "arith_to_xls",
     srcs = ["transforms/arith_to_xls.cc"],
+    hdrs = ["transforms/arith_to_xls.h"],
     deps = [
         ":arith_to_xls_patterns_inc_gen",
         ":mlir_xls",
@@ -500,6 +501,7 @@ cc_library(
         "stdlib/fp_ext_trunc.x",
     ],
     deps = [
+        ":arith_to_xls",
         ":conversion_utils",
         ":identifier",
         ":mlir_xls",
@@ -542,6 +544,8 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
     ],
 )
