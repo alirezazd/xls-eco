@@ -71,6 +71,7 @@
 #include "xls/common/file/get_runfile_path.h"
 #include "xls/contrib/mlir/IR/xls_ops.h"
 #include "xls/contrib/mlir/transforms/arith_to_xls.h"
+#include "xls/contrib/mlir/transforms/passes.h"
 #include "xls/contrib/mlir/util/conversion_utils.h"
 #include "xls/ir/bits.h"
 #include "xls/ir/channel.h"
@@ -730,6 +731,34 @@ BValue convertOp(func::CallOp call, TranslationState& state, BuilderBase& fb) {
   return result;
 }
 
+BValue convertOp(VectorizedCallOp call, TranslationState& state, BuilderBase& fb) {
+  std::vector<BValue> args;
+  for (auto arg : call.getOperands()) {
+    args.push_back(state.getXlsValue(arg));
+  }
+  absl::StatusOr<::xls::Function*> func_or =
+      getFunction(state, call.getCallee());
+  if (!func_or.ok()) {
+    llvm::errs() << "Failed to find function: " << func_or.status().message()
+                 << "\n";
+    return BValue();
+  }
+  BValue result = fb.Invoke(args, *func_or, state.getLoc(call));
+
+  if (call.getNumResults() == 1) {
+    return coerceFloatResult(call.getResult(0), result, *func_or, fb);
+  }
+
+  for (int i = 0, e = call.getNumResults(); i < e; ++i) {
+    BValue this_result = fb.TupleIndex(result, i);
+    this_result =
+        coerceFloatResult(call.getResult(i), this_result, *func_or, fb);
+    state.setValue(call.getResult(i), this_result);
+  }
+  // Just return the tuple result to indicate success.
+  return result;
+}
+
 BValue convertOp(MapOp mapOp, TranslationState& state, BuilderBase& fb) {
   BValue operand = state.getXlsValue(mapOp.getOperand());
   absl::StatusOr<::xls::Function*> func_or =
@@ -1200,7 +1229,7 @@ FailureOr<BValue> convertFunction(TranslationState& translation_state,
             // Constants
             ConstantScalarOp, arith::ConstantOp, LiteralOp,
             // Control flow
-            func::CallOp, CountedForOp, MapOp,
+            func::CallOp, VectorizedCallOp, CountedForOp, MapOp,
             // Casts
             arith::BitcastOp, arith::IndexCastOp,
             // CSP ops
@@ -1251,7 +1280,7 @@ FailureOr<BValue> convertFunction(TranslationState& translation_state,
 
     // Receives and partial products have multiple results but are explicitly
     // supported.
-    if (!isa<BlockingReceiveOp, func::CallOp, NonblockingReceiveOp, UmulpOp,
+    if (!isa<BlockingReceiveOp, func::CallOp, VectorizedCallOp, NonblockingReceiveOp, UmulpOp,
              SmulpOp>(op)) {
       assert(op->getNumResults() <= 1 && "Multiple results not supported");
     }
@@ -1801,6 +1830,15 @@ LogicalResult MlirXlsToXlsTranslate(Operation* op, llvm::raw_ostream& output,
     
     if (failed(mlir::applyPartialConversion(op, target, std::move(patterns)))) {
       return op->emitError("Failed to apply arith-to-xls patterns");
+    }
+  }
+
+  // Apply normalize-xls-calls pass to convert CallDslxOp to regular function calls
+  {
+    PassManager pm(op->getContext());
+    pm.addPass(createNormalizeXlsCallsPass());
+    if (pm.run(op).failed()) {
+      return op->emitError("Failed to run normalize-xls-calls pass");
     }
   }
 
