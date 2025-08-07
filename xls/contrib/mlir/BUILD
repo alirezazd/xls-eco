@@ -505,6 +505,8 @@ cc_library(
         ":conversion_utils",
         ":identifier",
         ":mlir_xls",
+        ":normalize_xls_calls",
+        ":xls_transforms_passes",
         "//xls/codegen:xls_metrics_cc_proto",
         "//xls/codegen/vast",
         "//xls/common/file:filesystem",
