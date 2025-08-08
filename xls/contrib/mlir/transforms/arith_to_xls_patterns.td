@@ -4,6 +4,18 @@ include "mlir/Dialect/Func/IR/FuncOps.td"
 include "mlir/Dialect/Math/IR/MathOps.td"
 include "mlir/IR/PatternBase.td"
 
+def DenseResourceElementsAttr : ElementsAttrBase<
+  CPred<"::llvm::isa<::mlir::DenseResourceElementsAttr>($_self)">,
+  "dense resource elements attribute"> {
+  let storageType = [{ ::mlir::DenseResourceElementsAttr }];
+  let returnType = [{ ::mlir::DenseResourceElementsAttr }];
+  let convertFromStorage = "$_self";
+}
+
+// Pattern for resource-backed arith.constant
+def : Pat<(Arith_ConstantOp DenseResourceElementsAttr:$val),
+          (Xls_ConstantTensorOp $val)>;
+
 defvar NoOverflow = ConstantEnumCase<Arith_IntegerOverflowAttr, "none">;
 
 def FloatLib : NativeCodeCall<"getFloatLib($0.getType())">;

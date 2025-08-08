@@ -22,19 +22,20 @@
 #include "llvm/include/llvm/Support/LogicalResult.h"
 #include "llvm/include/llvm/Support/SourceMgr.h"
 #include "llvm/include/llvm/Support/raw_ostream.h"
-#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/include/mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/include/mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/include/mlir/IR/BuiltinAttributes.h"
-#include "mlir/include/mlir/IR/BuiltinOps.h"
-#include "mlir/include/mlir/IR/MLIRContext.h"
-#include "mlir/include/mlir/IR/Value.h"
-#include "mlir/include/mlir/IR/Visitors.h"
-#include "mlir/include/mlir/Support/LLVM.h"
-#include "mlir/include/mlir/Support/LogicalResult.h"
-#include "mlir/include/mlir/Tools/mlir-translate/MlirTranslateMain.h"
-#include "mlir/include/mlir/Tools/mlir-translate/Translation.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/Visitors.h"
+#include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
+#include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
+#include "mlir/Tools/mlir-translate/Translation.h"
 #include "xls/codegen/xls_metrics.pb.h"
 #include "xls/contrib/mlir/IR/register.h"
 #include "xls/contrib/mlir/tools/xls_translate/xls_stitch.h"
@@ -75,7 +76,8 @@ llvm::cl::opt<bool> dumpCodegenMetrics(
 
 void registerInputDialects(DialectRegistry& registry) {
   registry.insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
-                  mlir::scf::SCFDialect, mlir::tensor::TensorDialect>();
+                  mlir::scf::SCFDialect, mlir::tensor::TensorDialect,
+                  mlir::linalg::LinalgDialect>();
   registerXlsDialect(registry);
 }
 
