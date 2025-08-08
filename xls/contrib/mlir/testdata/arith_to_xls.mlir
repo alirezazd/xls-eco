@@ -49,6 +49,76 @@ func.func @and(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32
   return %0 : tensor<3x3xi32>
 }
 
+// CHECK-LABEL: @or
+// CHECK: xls.or
+func.func @or(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.ori %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
+// CHECK-LABEL: @xor
+// CHECK: xls.xor
+func.func @xor(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.xori %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
+// CHECK-LABEL: @subi
+// CHECK: xls.sub
+func.func @subi(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.subi %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
+// CHECK-LABEL: @muli
+// CHECK: xls.umul
+func.func @muli(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.muli %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
+// CHECK-LABEL: @divsi
+// CHECK: xls.sdiv
+func.func @divsi(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.divsi %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
+// CHECK-LABEL: @divui
+// CHECK: xls.udiv
+func.func @divui(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.divui %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
+// CHECK-LABEL: @remsi
+// CHECK: xls.smod
+func.func @remsi(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.remsi %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
+// CHECK-LABEL: @remui
+// CHECK: xls.umod
+func.func @remui(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.remui %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
+// CHECK-LABEL: @shli
+// CHECK: xls.shll
+func.func @shli(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.shli %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
+// CHECK-LABEL: @shrui
+// CHECK: xls.shrl
+func.func @shrui(%arg0: tensor<3x3xi32>, %arg1: tensor<3x3xi32>) -> tensor<3x3xi32> attributes { "xls" = true } {
+  %0 = arith.shrui %arg0, %arg1 : tensor<3x3xi32>
+  return %0 : tensor<3x3xi32>
+}
+
 // CHECK-LABEL: addf
 // CHECK: call_dslx
 // CHECK-SAME: "add"
