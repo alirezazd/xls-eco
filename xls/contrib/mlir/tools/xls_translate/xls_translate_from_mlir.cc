@@ -249,6 +249,18 @@ class TranslationState {
             return package_.GetArrayType(t.getNumElements(),
                                          getType(t.getElementType()));
           })
+          .Case<RankedTensorType>([&](RankedTensorType t) -> ::xls::Type* {
+            // Convert tensor to nested arrays
+            ::xls::Type* element_type = getType(t.getElementType());
+            ::xls::Type* result_type = element_type;
+            
+            // Build nested array types from innermost to outermost dimension
+            for (int64_t i = t.getRank() - 1; i >= 0; --i) {
+              int64_t dim_size = t.getDimSize(i);
+              result_type = package_.GetArrayType(dim_size, result_type);
+            }
+            return result_type;
+          })
           .Case<TokenType>([&](TokenType /*t*/) -> ::xls::Type* {
             return package_.GetTokenType();
           })
@@ -823,6 +835,217 @@ BValue convertOp(CountedForOp counted_for_op, TranslationState& state,
         ::xls::Value(convertAPInt(mantissa)),
     });
   }
+  if (auto dense_resource_attr = dyn_cast<DenseResourceElementsAttr>(attr)) {
+    // Dense resource extraction using proper MLIR APIs
+    ShapedType shaped_type = cast<ShapedType>(dense_resource_attr.getType());
+    Type element_type = shaped_type.getElementType();
+    int64_t num_elements = shaped_type.getNumElements();
+    
+    // Dense resource encountered - extracting data
+    
+    std::vector<::xls::Value> elements;
+    elements.reserve(num_elements);
+    bool data_extracted = false;
+    
+    // Use the proper MLIR API: cast to specialized typed class, then call tryGetAsArrayRef()
+    if (element_type.isF32()) {
+      if (auto typed_attr = dyn_cast<DenseF32ResourceElementsAttr>(dense_resource_attr)) {
+        if (auto array_ref = typed_attr.tryGetAsArrayRef()) {
+          for (float f : *array_ref) {
+            // Convert float to XLS tuple format (sign, exponent, mantissa)
+            llvm::APFloat apf(f);
+            llvm::APInt apint = apf.bitcastToAPInt();
+            
+            auto float_type = cast<FloatType>(element_type);
+            int mantissa_width = float_type.getFPMantissaWidth() - 1;
+            int exponent_width = float_type.getWidth() - float_type.getFPMantissaWidth();
+            llvm::APInt sign = apint.getHiBits(1).trunc(1);
+            llvm::APInt exponent = apint.extractBits(exponent_width, mantissa_width);
+            llvm::APInt mantissa = apint.extractBits(mantissa_width, 0);
+            
+            elements.push_back(::xls::Value::Tuple({
+              ::xls::Value(convertAPInt(sign)),
+              ::xls::Value(convertAPInt(exponent)),
+              ::xls::Value(convertAPInt(mantissa)),
+            }));
+          }
+          data_extracted = true;
+        }
+      }
+    } else if (element_type.isF64()) {
+      if (auto typed_attr = dyn_cast<DenseF64ResourceElementsAttr>(dense_resource_attr)) {
+        if (auto array_ref = typed_attr.tryGetAsArrayRef()) {
+          for (double d : *array_ref) {
+            llvm::APFloat apf(d);
+            llvm::APInt apint = apf.bitcastToAPInt();
+            
+            auto float_type = cast<FloatType>(element_type);
+            int mantissa_width = float_type.getFPMantissaWidth() - 1;
+            int exponent_width = float_type.getWidth() - float_type.getFPMantissaWidth();
+            llvm::APInt sign = apint.getHiBits(1).trunc(1);
+            llvm::APInt exponent = apint.extractBits(exponent_width, mantissa_width);
+            llvm::APInt mantissa = apint.extractBits(mantissa_width, 0);
+            
+            elements.push_back(::xls::Value::Tuple({
+              ::xls::Value(convertAPInt(sign)),
+              ::xls::Value(convertAPInt(exponent)),
+              ::xls::Value(convertAPInt(mantissa)),
+            }));
+          }
+          data_extracted = true;
+        }
+      }
+    } else if (auto int_type = dyn_cast<IntegerType>(element_type)) {
+      // Handle integer types
+      if (int_type.getWidth() == 8) {
+        if (auto typed_attr = dyn_cast<DenseUI8ResourceElementsAttr>(dense_resource_attr)) {
+          if (auto array_ref = typed_attr.tryGetAsArrayRef()) {
+            for (uint8_t v : *array_ref) {
+              absl::InlinedVector<bool, 64> bits(8);
+              for (unsigned i = 0; i < 8; ++i) {
+                bits[i] = (v >> i) & 1;
+              }
+              elements.push_back(::xls::Value(::xls::Bits(bits)));
+            }
+            data_extracted = true;
+          }
+        }
+      } else if (int_type.getWidth() == 16) {
+        if (auto typed_attr = dyn_cast<DenseUI16ResourceElementsAttr>(dense_resource_attr)) {
+          if (auto array_ref = typed_attr.tryGetAsArrayRef()) {
+            for (uint16_t v : *array_ref) {
+              absl::InlinedVector<bool, 64> bits(16);
+              for (unsigned i = 0; i < 16; ++i) {
+                bits[i] = (v >> i) & 1;
+              }
+              elements.push_back(::xls::Value(::xls::Bits(bits)));
+            }
+            data_extracted = true;
+          }
+        }
+      } else if (int_type.getWidth() == 32) {
+        if (auto typed_attr = dyn_cast<DenseUI32ResourceElementsAttr>(dense_resource_attr)) {
+          if (auto array_ref = typed_attr.tryGetAsArrayRef()) {
+            for (uint32_t v : *array_ref) {
+              absl::InlinedVector<bool, 64> bits(32);
+              for (unsigned i = 0; i < 32; ++i) {
+                bits[i] = (v >> i) & 1;
+              }
+              elements.push_back(::xls::Value(::xls::Bits(bits)));
+            }
+            data_extracted = true;
+          }
+        }
+      } else if (int_type.getWidth() == 64) {
+        if (auto typed_attr = dyn_cast<DenseUI64ResourceElementsAttr>(dense_resource_attr)) {
+          if (auto array_ref = typed_attr.tryGetAsArrayRef()) {
+            for (uint64_t v : *array_ref) {
+              absl::InlinedVector<bool, 64> bits(64);
+              for (unsigned i = 0; i < 64; ++i) {
+                bits[i] = (v >> i) & 1;
+              }
+              elements.push_back(::xls::Value(::xls::Bits(bits)));
+            }
+            data_extracted = true;
+          }
+        }
+      }
+    }
+    
+    // Fallback: create zero values if extraction failed
+    if (!data_extracted) {
+      
+      if (auto float_type = dyn_cast<FloatType>(element_type)) {
+        // Create properly typed zero float values  
+        int mantissa_width = float_type.getFPMantissaWidth() - 1;
+        int exponent_width = float_type.getWidth() - float_type.getFPMantissaWidth();
+        
+        ::xls::Value zero_float = ::xls::Value::Tuple({
+            ::xls::Value(::xls::UBits(0, 1)),                    // sign = 0
+            ::xls::Value(::xls::UBits(0, exponent_width)),       // exponent = 0  
+            ::xls::Value(::xls::UBits(0, mantissa_width))        // mantissa = 0
+        });
+        
+        for (int64_t i = 0; i < num_elements; ++i) {
+          elements.push_back(zero_float);
+        }
+        
+      } else if (auto int_type = dyn_cast<IntegerType>(element_type)) {
+        // Create properly typed zero integer values
+        ::xls::Value zero_int = ::xls::Value(::xls::UBits(0, int_type.getWidth()));
+        for (int64_t i = 0; i < num_elements; ++i) {
+          elements.push_back(zero_int);
+        }
+        
+      } else {
+        llvm::errs() << "ERROR: Unsupported element type for dense resource: " << element_type << "\n";
+        return {};
+      }
+    }
+    
+    auto array_result = ::xls::Value::Array(elements);
+    if (!array_result.ok()) {
+      llvm::errs() << "ERROR: Failed to create array from dense resource: " 
+                   << array_result.status().message() << "\n";
+      return {};
+    }
+    
+    return array_result.value();
+  }
+  if (auto dense_elements_attr = dyn_cast<DenseElementsAttr>(attr)) {
+    // Handle inline dense constants (like dense<[[1.0, 2.0], [3.0, 4.0]]>)
+    auto shaped_type = cast<ShapedType>(dense_elements_attr.getType());
+    
+    std::vector<::xls::Value> elements;
+    elements.reserve(shaped_type.getNumElements());
+    
+    // Extract each element from the dense array
+    for (auto element : dense_elements_attr.getValues<Attribute>()) {
+      ::xls::Value xls_element;
+      
+      if (auto float_attr = dyn_cast<FloatAttr>(element)) {
+        // Convert float to XLS tuple format (sign, exponent, mantissa)
+        FloatType float_type = cast<FloatType>(float_attr.getType());
+        int mantissa_width = float_type.getFPMantissaWidth() - 1;
+        int exponent_width = float_type.getWidth() - float_type.getFPMantissaWidth();
+        
+        auto apfloat = float_attr.getValue();
+        auto apint = apfloat.bitcastToAPInt();
+        llvm::APInt sign = apint.getHiBits(1).trunc(1);
+        llvm::APInt exponent = apint.extractBits(exponent_width, mantissa_width);
+        llvm::APInt mantissa = apint.extractBits(mantissa_width, 0);
+
+        xls_element = ::xls::Value::Tuple({
+            ::xls::Value(convertAPInt(sign)),
+            ::xls::Value(convertAPInt(exponent)),
+            ::xls::Value(convertAPInt(mantissa)),
+        });
+      } else if (auto int_attr = dyn_cast<IntegerAttr>(element)) {
+        // Convert integer to XLS bits
+        auto intType = dyn_cast<IntegerType>(int_attr.getType());
+        unsigned bitWidth = intType ? intType.getWidth() : 32u;
+        auto intVal = int_attr.getValue();
+        absl::InlinedVector<bool, 64> bits(bitWidth);
+        for (unsigned i : llvm::seq(0u, bitWidth)) {
+          bits[i] = intVal[i];
+        }
+        xls_element = ::xls::Value(::xls::Bits(bits));
+      } else {
+        llvm::errs() << "Unsupported dense element type: " << element << "\n";
+        return {};
+      }
+      
+      elements.push_back(xls_element);
+    }
+    
+    auto array_result = ::xls::Value::Array(elements);
+    if (!array_result.ok()) {
+      llvm::errs() << "Failed to create array from dense elements: " 
+                   << array_result.status().message() << "\n";
+      return {};
+    }
+    return array_result.value();
+  }
   llvm::errs() << "Unsupported constant type: " << attr << "\n";
   return {};
 }
@@ -841,6 +1064,11 @@ BValue convertOp(ConstantScalarOp op, const TranslationState& state,
 }
 
 BValue convertOp(arith::ConstantOp op, const TranslationState& state,
+                 BuilderBase& fb) {
+  return fb.Literal(convertConstantAttr(op.getValue()), state.getLoc(op));
+}
+
+BValue convertOp(ConstantTensorOp op, const TranslationState& state,
                  BuilderBase& fb) {
   return fb.Literal(convertConstantAttr(op.getValue()), state.getLoc(op));
 }
@@ -1188,6 +1416,36 @@ FailureOr<::xls::Value> zeroLiteral(Type type) {
   return failure();
 }
 
+BValue convertOp(mlir::tensor::EmptyOp op, const TranslationState& state,
+                 BuilderBase& fb) {
+  // tensor.empty creates an uninitialized tensor
+  // We'll implement it as a zero-filled tensor similar to ArrayZeroOp
+  auto tensor_type = cast<RankedTensorType>(op.getType());
+  
+  // Create zero value for the element type
+  auto zero_literal_result = zeroLiteral(tensor_type.getElementType());
+  if (failed(zero_literal_result)) {
+    llvm::errs() << "Failed to create zero literal for tensor.empty\n";
+    return BValue();
+  }
+  
+  // Build nested array from tensor dimensions
+  ::xls::Value result_value = zero_literal_result.value();
+  for (int64_t i = tensor_type.getRank() - 1; i >= 0; --i) {
+    int64_t dim_size = tensor_type.getDimSize(i);
+    std::vector<::xls::Value> elements(dim_size, result_value);
+    auto array_result = ::xls::Value::Array(elements);
+    if (!array_result.ok()) {
+      llvm::errs() << "Failed to create array for tensor.empty: " 
+                   << array_result.status().message() << "\n";
+      return BValue();
+    }
+    result_value = array_result.value();
+  }
+  
+  return fb.Literal(result_value, state.getLoc(op));
+}
+
 FailureOr<BValue> convertFunction(TranslationState& translation_state,
                                   XlsRegionOpInterface xls_region,
                                   DenseMap<Value, BValue>& value_map,
@@ -1219,6 +1477,8 @@ FailureOr<BValue> convertFunction(TranslationState& translation_state,
             // Array ops.
             ArrayOp, ArrayZeroOp, ArrayIndexOp, ArrayIndexStaticOp,
             ArraySliceOp, ArrayUpdateOp, ArrayConcatOp,
+            // Tensor ops.
+            mlir::tensor::EmptyOp,
             // Tuple operations
             TupleOp, TupleIndexOp,
             // Bit-vector operations
@@ -1227,7 +1487,7 @@ FailureOr<BValue> convertFunction(TranslationState& translation_state,
             // Control-oriented operations
             SelOp, OneHotSelOp, PrioritySelOp,
             // Constants
-            ConstantScalarOp, arith::ConstantOp, LiteralOp,
+            ConstantScalarOp, ConstantTensorOp, arith::ConstantOp, LiteralOp,
             // Control flow
             func::CallOp, VectorizedCallOp, CountedForOp, MapOp,
             // Casts

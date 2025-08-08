@@ -101,6 +101,10 @@ defvar Xls_BitsOrTuple = AnyTypeOf<[Xls_Bits, NestedTupleOf<[Xls_Bits]>]>;
 defvar Xls_BitsOrTupleOrToken = AnyTypeOf<[
   Xls_Bits, NestedTupleOf<[Xls_Bits]>, Xls_TokenType]>;
 
+// Float tensor types for neural network support
+defvar Xls_FloatTensors = StaticShapeTensorOf<[F32, BF16, F64]>;
+defvar Xls_BitsAndFloats = AnyTypeOf<[Xls_Bits, Xls_FloatTensors]>;
+
 // Base class for XLS dialect attributes.
 class Xls_Attr<string name, list<Trait> traits = []>
     : AttrDef<Xls_Dialect, name, traits> {
@@ -1436,7 +1440,7 @@ def Xls_ConstantTensorOp : Xls_Op<"constant_tensor", [ConstantLike, Pure]> {
     ElementsAttr:$value
   );
   let results = (outs
-    StaticShapeTensorOf<[AnySignlessInteger, AnyFloat]>:$result
+    Xls_BitsAndFloats:$result
   );
   let hasFolder = 1;
 }
