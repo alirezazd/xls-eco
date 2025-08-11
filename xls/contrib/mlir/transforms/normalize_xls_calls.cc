@@ -91,9 +91,26 @@ void NormalizeXlsCallsPass::runOnOperation() {
                                             call->getResultTypes());
         }
 
+        // Derive a sane MLIR function symbol name. If the function attribute
+        // is an inline DSLX snippet (starts with "fn "), extract the DSLX
+        // function identifier from it. Otherwise use the attribute verbatim.
+        std::string callee_suffix = call.getFunction().str();
+        if (llvm::StringRef(callee_suffix).starts_with("fn ")) {
+          // Extract between "fn " and the opening '('.
+          llvm::StringRef ref = callee_suffix;
+          ref = ref.drop_front(3).ltrim();
+          auto name_and_rest = ref.split('(');
+          llvm::StringRef extracted = name_and_rest.first.trim();
+          if (!extracted.empty()) {
+            callee_suffix = extracted.str();
+          } else {
+            callee_suffix = "inlined";
+          }
+        }
+
         auto func = mlir::func::FuncOp::create(
             builder, op->getLoc(),
-            llvm::formatv("{0}_{1}", path.stem(), call.getFunction()).str(),
+            llvm::formatv("{0}_{1}", path.stem(), callee_suffix).str(),
             newType);
         func.setVisibility(SymbolTable::Visibility::Private);
         func->setAttr("xls.linkage", xls::TranslationLinkage::get(

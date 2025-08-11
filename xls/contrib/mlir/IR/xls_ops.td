@@ -806,6 +806,24 @@ def Xls_ArrayZeroOp : Xls_Op<"array_zero", [Pure, TensorArrayTypeFungible]> {
   );
 }
 
+def Xls_ArraySplatOp : Xls_Op<"array_splat", [Pure, TensorArrayTypeFungible]> {
+  let summary = "Array creation operation by splatting a scalar value";
+  let description = [{
+    Constructs an array by broadcasting/splatting a scalar value to all elements.
+  }];
+  let arguments = (ins
+    AnyType:$value
+  );
+  let results = (outs
+    Xls_ArrayType:$result
+  );
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$value, "::mlir::Type":$resultType), [{
+      build($_builder, $_state, resultType, value);
+    }]>
+  ];
+}
+
 def Xls_ArrayIndexOp : Xls_Op<"array_index", [Pure, ShapesAreConsistent<["array", "result"]>,
                                               TensorArrayTypeFungible]> {
   let summary = "Array indexing operation";

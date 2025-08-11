@@ -37,6 +37,7 @@ void XlsLowerPassPipeline(OpPassManager& pm,
   }
   pm.addPass(createScfToXlsPass());
   pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(createLinalgToXlsPass());
   pm.addPass(createMathToXlsPass());
   pm.addPass(createArithToXlsPass());
   pm.addPass(createNormalizeXlsCallsPass());

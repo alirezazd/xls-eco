@@ -29,6 +29,21 @@ def MathToXlsPass : Pass<"math-to-xls", "::mlir::ModuleOp"> {
   let dependentDialects = ["mlir::xls::XlsDialect"];
 }
 
+def LinalgToXlsPass : Pass<"linalg-to-xls", "::mlir::ModuleOp"> {
+  let summary = "Lower Linalg operations to XLS operations";
+  let description = [{
+    Pass that converts Linalg operations to the equivalent operations using
+    XLS operations and DSLX calls. Currently supports linalg.generic operations
+    with parallel iterators for element-wise operations.
+  }];
+  let dependentDialects = [
+    "mlir::xls::XlsDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
 def NormalizeXlsCallsPass : Pass<"normalize-xls-calls", "::mlir::ModuleOp"> {
   let summary = "Normalize XLS calls across packages";
   let description = [{
@@ -145,6 +160,18 @@ def ProcifyLoopsPass : Pass<"procify-loops", "mlir::ModuleOp"> {
     Option<"apply_by_default", "apply-by-default", "bool",
     /*default=*/"false",
     "Apply the pass by default if the attribute is not present">
+  ];
+}
+
+def AddXlsAttributesPass : Pass<"add-xls-attributes", "::mlir::ModuleOp"> {
+  let summary = "Adds xls=true attribute to functions that don't have it";
+  let description = [{
+    Pass that adds the "xls" = true attribute to all functions that don't already
+    have this attribute. This is useful for ensuring that functions are properly
+    marked for XLS translation.
+  }];
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
   ];
 }
 

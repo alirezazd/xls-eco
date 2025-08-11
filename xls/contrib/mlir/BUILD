@@ -137,6 +137,8 @@ gentbl_cc_library(
     deps = [":xls_ops_td_files"],
 )
 
+
+
 cc_library(
     name = "assembly_format",
     srcs = ["IR/assembly_format.cc"],
@@ -247,6 +249,25 @@ cc_library(
 )
 
 cc_library(
+    name = "linalg_to_xls",
+    srcs = ["transforms/linalg_to_xls.cc"],
+    hdrs = ["transforms/linalg_to_xls.h"],
+    deps = [
+        ":mlir_xls",
+        ":xls_transforms_passes_inc_gen",
+        "//xls/common/file:temp_file",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect", 
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:TransformUtils",
+    ],
+)
+
+cc_library(
     name = "normalize_xls_calls",
     srcs = ["transforms/normalize_xls_calls.cc"],
     deps = [
@@ -297,6 +318,21 @@ cc_library(
 )
 
 cc_library(
+    name = "add_xls_attributes",
+    srcs = ["transforms/add_xls_attributes.cc"],
+    hdrs = ["transforms/add_xls_attributes.h"],
+    deps = [
+        ":mlir_xls",
+        ":xls_transforms_passes_inc_gen",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:Transforms",
+    ],
+)
+
+cc_library(
     name = "array_to_bits",
     srcs = ["transforms/array_to_bits.cc"],
     deps = [
@@ -330,6 +366,7 @@ cc_library(
         ":expand_macro_ops",  # buildcleaner: keep
         ":index_type_conversion",  # buildcleaner: keep
         ":instantiate_eprocs",  # buildcleaner: keep
+        ":linalg_to_xls",  # buildcleaner: keep
         ":math_to_xls",  # buildcleaner: keep
         ":mlir_xls",
         ":normalize_xls_calls",  # buildcleaner: keep
@@ -445,6 +482,7 @@ cc_binary(
     name = "xls_opt",
     srcs = ["tools/xls_opt/xls_opt.cc"],
     deps = [
+        ":add_xls_attributes",  # buildcleaner: keep
         ":array_to_bits",  # buildcleaner: keep
         ":extraction_utils",
         ":mlir_xls",
@@ -455,6 +493,7 @@ cc_binary(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:LinalgDialect",
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MlirOptLib",
         "@llvm-project//mlir:Pass",
@@ -581,6 +620,16 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Support",
     ],
+)
+
+# Test MLIR to XLS IR conversion
+load("//xls/build_rules:xls_build_defs.bzl", "mlir_to_xls_ir")
+
+mlir_to_xls_ir(
+    name = "test_mulf_ir",
+    src = "test_mulf_real_world.mlir",
+    main_function = "test_mulf_scalar",
+    ir_file = "test_mulf_real_world.ir",
 )
 
 cc_library(

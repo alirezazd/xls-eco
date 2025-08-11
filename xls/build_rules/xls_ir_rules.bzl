@@ -1302,3 +1302,122 @@ xls_ir_cc_library = rule(
         },
     ),
 )
+
+def _mlir_to_xls_ir_impl(ctx):
+    """The implementation of the 'mlir_to_xls_ir' rule.
+
+    Converts MLIR to XLS IR using xls_opt and xls_translate.
+
+    Args:
+      ctx: The current rule's context object.
+
+    Returns:
+      IrFileInfo provider
+      DefaultInfo provider
+    """
+    src = ctx.file.src
+    ir_file = ctx.outputs.ir_file
+    
+    # First step: run xls_opt to convert MLIR to XLS dialect
+    temp_mlir = ctx.actions.declare_file(ctx.label.name + "_temp.mlir")
+    
+    xls_opt_args = ctx.actions.args()
+    xls_opt_args.add("--add-xls-attributes")
+    xls_opt_args.add("--xls-lower")
+    xls_opt_args.add(src.path)
+    xls_opt_args.add("-o", temp_mlir.path)
+    
+    ctx.actions.run(
+        outputs = [temp_mlir],
+        inputs = [src],
+        tools = [ctx.executable._xls_opt],
+        arguments = [xls_opt_args],
+        executable = ctx.executable._xls_opt,
+        mnemonic = "MlirOpt",
+        progress_message = "Running xls_opt on %s" % src.short_path,
+    )
+    
+    # Second step: run xls_translate to convert to XLS IR
+    xls_translate_args = ctx.actions.args()
+    xls_translate_args.add("--mlir-xls-to-xls")
+    xls_translate_args.add("--main-function", ctx.attr.main_function)
+    xls_translate_args.add("-o", ir_file.path)
+    xls_translate_args.add(temp_mlir.path)
+    
+    ctx.actions.run(
+        outputs = [ir_file],
+        inputs = [temp_mlir],
+        tools = [ctx.executable._xls_translate],
+        arguments = [xls_translate_args],
+        executable = ctx.executable._xls_translate,
+        mnemonic = "MlirTranslate",
+        progress_message = "Converting MLIR to XLS IR: %s" % src.short_path,
+    )
+    
+    return [
+        IrFileInfo(ir_file = ir_file),
+        DefaultInfo(
+            files = depset([ir_file]),
+        ),
+    ]
+
+mlir_to_xls_ir_attrs = {
+    "src": attr.label(
+        doc = "An MLIR source file for the rule. A single source file must be " +
+              "provided. The file must have a '.mlir' extension.",
+        mandatory = True,
+        allow_single_file = True,
+    ),
+    "main_function": attr.string(
+        doc = "The main function name to use for translation.",
+        mandatory = True,
+    ),
+    "ir_file": attr.output(
+        doc = "Filename of the generated IR. If not specified, the " +
+              "target name of the bazel rule followed by an " +
+              _IR_FILE_EXTENSION + " extension is used.",
+    ),
+    "_xls_opt": attr.label(
+        executable = True,
+        allow_files = True,
+        cfg = "exec",
+        default = Label("//xls/contrib/mlir:xls_opt"),
+    ),
+    "_xls_translate": attr.label(
+        executable = True,
+        allow_files = True,
+        cfg = "exec",
+        default = Label("//xls/contrib/mlir:xls_translate"),
+    ),
+}
+
+mlir_to_xls_ir = rule(
+    doc = """A build rule that converts MLIR to XLS IR.
+
+Examples:
+
+1. A simple example.
+
+    ```
+    mlir_to_xls_ir(
+        name = "test_ir",
+        src = "test.mlir",
+    )
+    ```
+
+1. With a custom output filename.
+
+    ```
+    mlir_to_xls_ir(
+        name = "test_ir",
+        src = "test.mlir",
+        ir_file = "custom_name.ir",
+    )
+    ```
+    """,
+    implementation = _mlir_to_xls_ir_impl,
+    attrs = dicts.add(
+        mlir_to_xls_ir_attrs,
+        CONFIG["xls_outs_attrs"],
+    ),
+)

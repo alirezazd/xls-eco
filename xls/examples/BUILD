@@ -70,6 +70,30 @@ xls_dslx_library(
     srcs = ["lfsr.x"],
 )
 
+
+
+# Fill Const IR and Verilog generation (to analyze optimization)
+xls_dslx_opt_ir(
+    name = "linalg_fill_const_ir",
+    srcs = ["linalg_fill_const.x"],
+    dslx_top = "fill_2x2",
+    ir_file = "linalg_fill_const.ir",
+    opt_ir_file = "linalg_fill_const.opt.ir",
+)
+
+xls_dslx_verilog(
+    name = "linalg_fill_const_verilog",
+    codegen_args = {
+        "module_name": "linalg_fill_const",
+        "generator": "combinational",
+        "delay_model": "unit",
+        "use_system_verilog": "true",
+    },
+    dslx_top = "fill_2x2",
+    library = ":linalg_fill_const",
+    verilog_file = "linalg_fill_const.sv",
+)
+
 xls_dslx_fmt_test(
     name = "lfsr_fmt_test",
     src = "lfsr.x",
@@ -164,6 +188,7 @@ xls_dslx_test(
     srcs = ["dot_product.x"],
     dslx_test_args = {"compare": "jit"},
 )
+
 
 xls_dslx_library(
     name = "fir_filter_dslx",

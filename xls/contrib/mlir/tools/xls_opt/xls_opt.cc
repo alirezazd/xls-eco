@@ -15,6 +15,7 @@
 #include "llvm/include/llvm/Support/LogicalResult.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/include/mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/include/mlir/Dialect/Math/IR/Math.h"
 #include "mlir/include/mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/include/mlir/Dialect/Tensor/IR/Tensor.h"
@@ -31,17 +32,19 @@
 int main(int argc, char** argv) {
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
-                  mlir::math::MathDialect, mlir::scf::SCFDialect,
-                  mlir::tensor::TensorDialect>();
+                  mlir::linalg::LinalgDialect, mlir::math::MathDialect, 
+                  mlir::scf::SCFDialect, mlir::tensor::TensorDialect>();
   mlir::xls::registerXlsDialect(registry);
   mlir::registerCanonicalizerPass();
   mlir::registerCSEPass();
   mlir::registerSymbolDCEPass();
   mlir::registerPass(mlir::xls::createScalarizePass);
   mlir::registerPass(mlir::xls::createArithToXlsPass);
+  mlir::registerPass(mlir::xls::createLinalgToXlsPass);
   mlir::registerPass(mlir::xls::createScfToXlsPass);
   mlir::registerPass(mlir::xls::createNormalizeXlsCallsPass);
   mlir::registerPass(mlir::xls::createLowerCountedForPass);
+  mlir::registerPass(mlir::xls::createAddXlsAttributesPass);
   mlir::xls::registerXlsTransformsPasses();
   mlir::xls::RegisterXlsLowerPassPipeline();
   mlir::xls::test::registerTestExtractAsTopLevelModulePass();

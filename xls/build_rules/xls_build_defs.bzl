@@ -46,6 +46,7 @@ load(
 load(
     "//xls/build_rules:xls_ir_rules.bzl",
     _get_mangled_ir_symbol = "get_mangled_ir_symbol",
+    _mlir_to_xls_ir = "mlir_to_xls_ir",
     _xls_eval_ir_test = "xls_eval_ir_test",
     _xls_ir_equivalence_test = "xls_ir_equivalence_test",
 )
@@ -86,6 +87,7 @@ xls_dslx_test = _xls_dslx_test
 xls_dslx_prove_quickcheck_test = _xls_dslx_prove_quickcheck_test
 
 get_mangled_ir_symbol = _get_mangled_ir_symbol
+mlir_to_xls_ir = _mlir_to_xls_ir
 xls_benchmark_ir = _xls_full_benchmark_ir_macro
 xls_ir_equivalence_test = _xls_ir_equivalence_test
 xls_ir_cc_library = _xls_ir_cc_library_macro

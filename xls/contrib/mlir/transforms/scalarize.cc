@@ -515,6 +515,23 @@ class LegalizeTensorFromElementsPattern
   }
 };
 
+// Legalizes `tensor.splat` to `xls.array_splat`.
+class LegalizeTensorSplatPattern
+    : public OpConversionPattern<mlir::tensor::SplatOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      mlir::tensor::SplatOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter& rewriter) const override {
+    auto tensorType = llvm::cast<TensorType>(op.getResult().getType());
+    size_t numElements = tensorType.getNumElements();
+    Type elementType = tensorType.getElementType();
+    auto arrayType = ArrayType::get(op.getContext(), numElements, elementType);
+    rewriter.replaceOpWithNewOp<ArraySplatOp>(op, arrayType, adaptor.getInput());
+    return success();
+  }
+};
+
 class LegalizeTensorArrayTypeFungiblePattern
     : public OpTraitConversionPattern<TensorArrayTypeFungible> {
  public:
@@ -809,6 +826,27 @@ class LegalizeCallDslxPattern : public OpConversionPattern<CallDslxOp> {
   LogicalResult matchAndRewrite(
       CallDslxOp op, OpAdaptor adaptor,
       ConversionPatternRewriter& rewriter) const override {
+    // Check if this has the is_vector_call attribute
+    // If it doesn't, it's a reduction operation that shouldn't be scalarized
+    if (!op.getIsVectorCall()) {
+      // Non-vector calls (like matmul, reductions) should not be scalarized
+      // Just convert the types but keep the operation as-is
+      SmallVector<Type> resultTypes;
+      if (failed(typeConverter->convertTypes(op->getResultTypes(), resultTypes))) {
+        return failure();
+      }
+      
+      SmallVector<Value> newOperands;
+      for (Value operand : adaptor.getOperands()) {
+        newOperands.push_back(operand);
+      }
+      
+      rewriter.replaceOpWithNewOp<CallDslxOp>(
+          op, resultTypes, newOperands, op->getAttrs());
+      return success();
+    }
+    
+    // For vector calls, use the existing scalarization logic
     return convertVectorizedCall<CallDslxOp>(op, adaptor.getOperands(),
                                              *typeConverter, rewriter);
   }
@@ -876,6 +914,7 @@ class ScalarizePass : public impl::ScalarizePassBase<ScalarizePass> {
         LegalizeTensorExtractSingleSlicePattern,
         RankReduceTensorExtractSlicePattern,
         LegalizeTensorFromElementsPattern,
+        LegalizeTensorSplatPattern,
         LegalizeTensorInsertSingleSlicePattern,
         LegalizeTensorInsertPattern,
         LegalizeVectorizedCallPattern,
