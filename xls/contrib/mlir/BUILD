@@ -253,6 +253,8 @@ cc_library(
     srcs = ["transforms/linalg_to_xls.cc"],
     hdrs = ["transforms/linalg_to_xls.h"],
     deps = [
+        ":dslx_codegen",
+        ":linalg_analysis",
         ":mlir_xls",
         ":xls_transforms_passes_inc_gen",
         "//xls/common/file:temp_file",
@@ -264,6 +266,31 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
+    ],
+)
+
+cc_library(
+    name = "dslx_codegen",
+    srcs = ["transforms/dslx_codegen.cc"],
+    hdrs = ["transforms/dslx_codegen.h"],
+    deps = [
+        ":mlir_xls",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "linalg_analysis",
+    srcs = ["transforms/linalg_analysis.cc"],
+    hdrs = ["transforms/linalg_analysis.h"],
+    deps = [
+        ":mlir_xls",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:Support",
     ],
 )
 

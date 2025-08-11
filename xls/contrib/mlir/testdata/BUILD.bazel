@@ -13,6 +13,7 @@
 # limitations under the License.
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@llvm-project//llvm:lit_test.bzl", "lit_test")
+load("//xls/build_rules:xls_ir_rules.bzl", "mlir_to_xls_ir")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -76,4 +77,11 @@ RUNFILES_DIR = LITE_CFG_PY.parents[3].absolute().as_posix()''',
 test_suite(
     name = "mlir_xls_tests",
     tags = ["mlir_xls_tests"],
+)
+
+# MLIR to XLS IR conversion targets
+mlir_to_xls_ir(
+    name = "linalg_generic_ops_ir",
+    src = "linalg_generic_ops.mlir",
+    main_function = "test_tensor_add_tensor",
 )
