@@ -1,4 +1,4 @@
-# Copyright 2024 The XLS Authors
+# Copyright 2025 The XLS Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -249,52 +249,6 @@ cc_library(
 )
 
 cc_library(
-    name = "linalg_to_xls",
-    srcs = ["transforms/linalg_to_xls.cc"],
-    hdrs = ["transforms/linalg_to_xls.h"],
-    deps = [
-        ":dslx_codegen",
-        ":linalg_analysis",
-        ":mlir_xls",
-        ":xls_transforms_passes_inc_gen",
-        "//xls/common/file:temp_file",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:FuncDialect", 
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:LinalgDialect",
-        "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:TensorDialect",
-        "@llvm-project//mlir:TransformUtils",
-    ],
-)
-
-cc_library(
-    name = "dslx_codegen",
-    srcs = ["transforms/dslx_codegen.cc"],
-    hdrs = ["transforms/dslx_codegen.h"],
-    deps = [
-        ":mlir_xls",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:LinalgDialect",
-        "@llvm-project//mlir:Support",
-    ],
-)
-
-cc_library(
-    name = "linalg_analysis",
-    srcs = ["transforms/linalg_analysis.cc"],
-    hdrs = ["transforms/linalg_analysis.h"],
-    deps = [
-        ":mlir_xls",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:LinalgDialect",
-        "@llvm-project//mlir:Support",
-    ],
-)
-
-cc_library(
     name = "normalize_xls_calls",
     srcs = ["transforms/normalize_xls_calls.cc"],
     deps = [
@@ -393,7 +347,7 @@ cc_library(
         ":expand_macro_ops",  # buildcleaner: keep
         ":index_type_conversion",  # buildcleaner: keep
         ":instantiate_eprocs",  # buildcleaner: keep
-        ":linalg_to_xls",  # buildcleaner: keep
+        "//xls/contrib/mlir/transforms/linalg:linalg_to_xls",  # buildcleaner: keep
         ":math_to_xls",  # buildcleaner: keep
         ":mlir_xls",
         ":normalize_xls_calls",  # buildcleaner: keep
@@ -649,15 +603,7 @@ cc_library(
     ],
 )
 
-# Test MLIR to XLS IR conversion
-load("//xls/build_rules:xls_build_defs.bzl", "mlir_to_xls_ir")
 
-mlir_to_xls_ir(
-    name = "test_mulf_ir",
-    src = "test_mulf_real_world.mlir",
-    main_function = "test_mulf_scalar",
-    ir_file = "test_mulf_real_world.ir",
-)
 
 cc_library(
     name = "interpreter",

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "xls/contrib/mlir/transforms/linalg_to_xls.h"
+#include "xls/contrib/mlir/transforms/linalg/linalg_to_xls.h"
 
 #include <cstdint>
 #include <string>
@@ -25,8 +25,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Pass/Pass.h"
 #include "xls/contrib/mlir/IR/xls_ops.h"
-#include "xls/contrib/mlir/transforms/dslx_codegen.h"
-#include "xls/contrib/mlir/transforms/linalg_analysis.h"
+#include "xls/contrib/mlir/transforms/linalg/types/linalg_types.h"
+#include "xls/contrib/mlir/transforms/linalg/analysis/linalg_analysis.h"
 
 #define GEN_PASS_DEF_LINALGTOXLSPASS
 #include "xls/contrib/mlir/transforms/passes.h.inc"
@@ -43,7 +43,7 @@ struct LinalgElementwiseToArithPattern : public OpRewritePattern<linalg::Generic
     bool allParallel = llvm::all_of(iteratorTypes, [](utils::IteratorType iter) {
       return iter == utils::IteratorType::parallel;
     });
-    
+
     if (!allParallel) {
       return failure();
     }
@@ -64,17 +64,17 @@ struct LinalgElementwiseToArithPattern : public OpRewritePattern<linalg::Generic
         break;
       }
     }
-    
+
     if (!has_tensor) {
       return failure();
     }
 
     mlir::Region &bodyRegion = op.getRegion();
     mlir::Block &bodyBlock = bodyRegion.front();
-    
+
     Operation* arithOp = nullptr;
     int arithOpCount = 0;
-    
+
     for (Operation &bodyOp : bodyBlock) {
       if (isa<arith::AddFOp>(bodyOp) || isa<arith::MulFOp>(bodyOp) || isa<arith::SubFOp>(bodyOp)) {
         arithOpCount++;
@@ -86,15 +86,15 @@ struct LinalgElementwiseToArithPattern : public OpRewritePattern<linalg::Generic
         }
       }
     }
-    
+
     if (arithOpCount != 1) {
       return failure();
     }
-    
+
     if (!arithOp || !bodyBlock.getTerminator() || !isa<linalg::YieldOp>(bodyBlock.getTerminator())) {
       return failure();
     }
-    
+
     Value lhs, rhs;
     if (isa<arith::AddFOp>(arithOp)) {
       auto addOp = cast<arith::AddFOp>(arithOp);
@@ -111,12 +111,12 @@ struct LinalgElementwiseToArithPattern : public OpRewritePattern<linalg::Generic
     } else {
       return failure();
     }
-    
+
     auto loc = op.getLoc();
-    
+
     Value tensorOperand, scalarOperand;
     bool need_scalar_to_tensor = false;
-    
+
     auto findOperand = [&](Value value) -> Value {
       for (size_t i = 0; i < inputs.size(); i++) {
         if (value == bodyBlock.getArgument(i)) {
@@ -125,17 +125,17 @@ struct LinalgElementwiseToArithPattern : public OpRewritePattern<linalg::Generic
       }
       return nullptr;
     };
-    
+
     Value input1 = findOperand(lhs);
     Value input2 = findOperand(rhs);
-    
+
     if (!input1 || !input2) {
       return failure();
     }
-    
+
     bool input1_is_tensor = llvm::isa<RankedTensorType>(input1.getType());
     bool input2_is_tensor = llvm::isa<RankedTensorType>(input2.getType());
-    
+
     if (input1_is_tensor && !input2_is_tensor) {
       tensorOperand = input1;
       scalarOperand = input2;
@@ -148,7 +148,7 @@ struct LinalgElementwiseToArithPattern : public OpRewritePattern<linalg::Generic
       tensorOperand = input1;
       scalarOperand = input2;
     }
-    
+
     if (need_scalar_to_tensor) {
       auto tensorType = llvm::dyn_cast<RankedTensorType>(tensorOperand.getType());
       if (!tensorType) {
@@ -156,7 +156,7 @@ struct LinalgElementwiseToArithPattern : public OpRewritePattern<linalg::Generic
       }
       scalarOperand = rewriter.create<tensor::SplatOp>(loc, scalarOperand, tensorType);
     }
-    
+
     Value result;
     if (isa<arith::AddFOp>(arithOp)) {
       result = rewriter.create<arith::AddFOp>(loc, tensorOperand, scalarOperand);
@@ -167,7 +167,7 @@ struct LinalgElementwiseToArithPattern : public OpRewritePattern<linalg::Generic
     } else {
       return failure();
     }
-    
+
     rewriter.replaceOp(op, result);
     return success();
   }
@@ -187,7 +187,7 @@ struct LinalgFillToTensorSplatPattern : public OpRewritePattern<linalg::GenericO
     bool allParallel = llvm::all_of(iteratorTypes, [](utils::IteratorType iter) {
       return iter == utils::IteratorType::parallel;
     });
-    
+
     if (!allParallel) {
       return failure();
     }
@@ -196,79 +196,53 @@ struct LinalgFillToTensorSplatPattern : public OpRewritePattern<linalg::GenericO
     if (bodyRegion.empty()) {
       return failure();
     }
-    
+
     mlir::Block &bodyBlock = bodyRegion.front();
-    
+
     if (!bodyBlock.getTerminator() || !isa<linalg::YieldOp>(bodyBlock.getTerminator())) {
       return failure();
     }
-    
+
     auto yieldOp = cast<linalg::YieldOp>(bodyBlock.getTerminator());
     if (yieldOp.getValues().size() != 1) {
       return failure();
     }
-    
+
     Value yieldedValue = yieldOp.getValues()[0];
     auto constOp = yieldedValue.getDefiningOp<arith::ConstantOp>();
     if (!constOp) {
       return failure();
     }
-    
+
     auto resultType = llvm::dyn_cast<RankedTensorType>(op.getResult(0).getType());
     if (!resultType) {
       return failure();
     }
-    
+
     auto constValueAttr = constOp.getValue();
     auto loc = op.getLoc();
-    
+
     auto scalarConstant = rewriter.create<arith::ConstantOp>(loc, constValueAttr);
     auto splatTensor = rewriter.create<tensor::SplatOp>(loc, scalarConstant, resultType);
-    
+
     rewriter.replaceOp(op, splatTensor);
     return success();
   }
 };
 
-struct LinalgComplexToDslxPattern : public OpRewritePattern<linalg::GenericOp> {
-  LinalgComplexToDslxPattern(MLIRContext *context)
-      : OpRewritePattern<linalg::GenericOp>(context, /*benefit=*/10) {}
 
-  LogicalResult matchAndRewrite(linalg::GenericOp op,
-                                PatternRewriter &rewriter) const override {
-    LinalgGeneric linalg_analysis;
-    if (failed(AnalyzeLinalgGeneric(op, linalg_analysis))) {
-      return failure();
-    }
-    
-    DslxCodegenOptions options;
-    options.optimization_strategy = "performance";
-    options.include_debug_comments = true;
-    
-    DslxCodegen codegen(options);
-    
-    std::string dslx_code;
-    if (failed(codegen.generateDslxCode(op, dslx_code))) {
-      return failure();
-    }
-    
-    op.emitWarning() << "Complex linalg pattern detected. DSLX code generated:\n" << dslx_code;
-    
-    return failure();
-  }
-};
 
 struct LinalgToXlsPass : public ::impl::LinalgToXlsPassBase<LinalgToXlsPass> {
   void runOnOperation() override {
     MLIRContext *ctx = &getContext();
     RewritePatternSet patterns(ctx);
-    
+
     populateLinalgToXlsPatterns(patterns, ctx);
-    
+
     ConversionTarget target(*ctx);
     target.addLegalDialect<arith::ArithDialect, tensor::TensorDialect, xls::XlsDialect>();
     target.addIllegalOp<linalg::GenericOp>();
-    
+
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns)))) {
       signalPassFailure();
     }
@@ -291,7 +265,6 @@ void populateLinalgToXlsPatterns(RewritePatternSet& patterns,
                                 MLIRContext* context) {
   patterns.add<mlir::xls::LinalgElementwiseToArithPattern>(context);
   patterns.add<mlir::xls::LinalgFillToTensorSplatPattern>(context);
-  patterns.add<mlir::xls::LinalgComplexToDslxPattern>(context);
 }
 
 }  // namespace mlir

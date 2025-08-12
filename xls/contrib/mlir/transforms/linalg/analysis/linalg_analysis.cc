@@ -12,162 +12,110 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "xls/contrib/mlir/transforms/linalg_analysis.h"
+#include "xls/contrib/mlir/transforms/linalg/analysis/linalg_analysis.h"
 
+#include <algorithm>
+#include <set>
 #include <sstream>
+#include <string>
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/IR/Operation.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Support/LogicalResult.h"
+#include "xls/contrib/mlir/transforms/linalg/utils/helpers.h"
 
-namespace mlir {
-namespace xls {
+namespace mlir::xls {
 
-mlir::LogicalResult AnalyzeLinalgGeneric(mlir::Operation* op, LinalgGeneric& result) {
-  auto generic_op = mlir::dyn_cast<mlir::linalg::GenericOp>(op);
-  if (!generic_op) {
-    return mlir::failure();
-  }
-  
-  // Clear previous result
-  result = LinalgGeneric{};
-
-  // Analyze dimensions
-  auto iterator_types = generic_op.getIteratorTypesArray();
-  for (size_t i = 0; i < iterator_types.size(); ++i) {
-    Dim dim;
-    dim.name = std::string("d") + std::to_string(i);  // d0, d1, d2, d3, etc.
-    
-    if (iterator_types[i] == mlir::utils::IteratorType::parallel) {
-      dim.kind = IterKind::kParallel;
-    } else if (iterator_types[i] == mlir::utils::IteratorType::reduction) {
-      dim.kind = IterKind::kReduction;
-    } else {
-      return mlir::failure();  // Unsupported iterator type
-    }
-    
-    // For now, assume static extents (will be refined later)
-    dim.extent = 1;  // Placeholder
-    
-    result.dims.push_back(dim);
-  }
-
-  // Analyze operands
-  auto inputs = generic_op.getInputs();
-  auto outputs = generic_op.getOutputs();
-  
-  // Process inputs
-  for (size_t i = 0; i < inputs.size(); ++i) {
-    Operand operand;
-    operand.name = "input" + std::to_string(i);
-    operand.is_output = false;
-    
-    if (auto tensor_type = llvm::dyn_cast<mlir::RankedTensorType>(inputs[i].getType())) {
-      operand.type.tag = Type::kTensorF32;
-      for (auto dim : tensor_type.getShape()) {
-        if (mlir::ShapedType::isDynamic(dim)) {
-          operand.type.shape.push_back(-1);  // Dynamic dimension
-        } else {
-          operand.type.shape.push_back(dim);
-        }
-      }
-    } else if (inputs[i].getType().isF32()) {
-      operand.type.tag = Type::kScalarF32;
-      // Empty shape for scalars
-    } else {
-      return mlir::failure();  // Unsupported type
-    }
-    
-    // Analyze affine map for this operand
-    auto indexing_map = generic_op.getIndexingMapsArray()[i];
-    operand.map = AnalyzeAffineMap(indexing_map);
-    
-    result.operands.push_back(operand);
-  }
-  
-  // Process outputs
-  for (size_t i = 0; i < outputs.size(); ++i) {
-    Operand operand;
-    operand.name = "output" + std::to_string(i);
-    operand.is_output = true;
-    
-    if (auto tensor_type = llvm::dyn_cast<mlir::RankedTensorType>(outputs[i].getType())) {
-      operand.type.tag = Type::kTensorF32;
-      for (auto dim : tensor_type.getShape()) {
-        if (mlir::ShapedType::isDynamic(dim)) {
-          operand.type.shape.push_back(-1);  // Dynamic dimension
-        } else {
-          operand.type.shape.push_back(dim);
-        }
-      }
-    } else if (outputs[i].getType().isF32()) {
-      operand.type.tag = Type::kScalarF32;
-      // Empty shape for scalars
-    } else {
-      return mlir::failure();  // Unsupported type
-    }
-    
-    // Analyze affine map for this operand
-    auto indexing_map = generic_op.getIndexingMapsArray()[inputs.size() + i];
-    operand.map = AnalyzeAffineMap(indexing_map);
-    
-    result.operands.push_back(operand);
-  }
-
-  // Analyze region
-  return AnalyzeRegion(generic_op.getRegion(), result.region);
-}
+// Core analysis functions for converting MLIR to internal representation
 
 AffineMap AnalyzeAffineMap(mlir::AffineMap mlir_map) {
   AffineMap result;
-  
+
   for (auto expr : mlir_map.getResults()) {
     AffineExpr affine_expr;
-    
+
     if (auto const_expr = llvm::dyn_cast<mlir::AffineConstantExpr>(expr)) {
       if (const_expr.getValue() == 0) {
         affine_expr.kind = AffineExpr::kConst0;
         affine_expr.var = 0;
       } else {
-        // For now, only support constant 0
         return AffineMap{};
       }
     } else if (auto dim_expr = llvm::dyn_cast<mlir::AffineDimExpr>(expr)) {
       affine_expr.kind = AffineExpr::kVar;
       affine_expr.var = dim_expr.getPosition();
     } else {
-      // For now, only support simple expressions
       return AffineMap{};
     }
-    
+
     result.results.push_back(affine_expr);
   }
-  
+
   return result;
+}
+
+mlir::LogicalResult AnalyzeDimension(mlir::utils::IteratorType iterator_type, 
+                                    size_t dim_index, Dim& dim) {
+  dim.name = std::string("d") + std::to_string(dim_index);
+  
+  if (iterator_type == mlir::utils::IteratorType::parallel) {
+    dim.kind = IterKind::kParallel;
+  } else if (iterator_type == mlir::utils::IteratorType::reduction) {
+    dim.kind = IterKind::kReduction;
+  } else {
+    return mlir::failure();
+  }
+  
+  dim.extent = 1;  // Default extent - should be refined based on actual tensor dimensions
+  return mlir::success();
+}
+
+mlir::LogicalResult AnalyzeOperand(mlir::Value value, const std::string& name, 
+                                  bool is_output, mlir::AffineMap indexing_map, 
+                                  Operand& operand) {
+  operand.name = name;
+  operand.is_output = is_output;
+  operand.map = AnalyzeAffineMap(indexing_map);
+  
+  if (auto tensor_type = llvm::dyn_cast<mlir::RankedTensorType>(value.getType())) {
+    operand.type.tag = Type::kTensorF32;
+    for (auto dim : tensor_type.getShape()) {
+      if (mlir::ShapedType::isDynamic(dim)) {
+        operand.type.shape.push_back(-1);
+      } else {
+        operand.type.shape.push_back(dim);
+      }
+    }
+  } else if (value.getType().isF32()) {
+    operand.type.tag = Type::kScalarF32;
+  } else {
+    return mlir::failure();
+  }
+  
+  return mlir::success();
 }
 
 mlir::LogicalResult AnalyzeRegion(mlir::Region& mlir_region, Region& result) {
   if (mlir_region.empty()) {
     return mlir::failure();
   }
-  
+
   auto& block = mlir_region.front();
-  
+
   // Analyze block arguments
   for (size_t i = 0; i < block.getNumArguments(); ++i) {
     result.args.push_back(ValueId(i));
   }
-  
-  // Analyze operations in the block
+
   int next_id = block.getNumArguments();
   std::vector<std::pair<mlir::Value, ValueId>> value_to_id_pairs;
-  
-  // Initialize block arguments
+
   for (size_t i = 0; i < block.getNumArguments(); ++i) {
     value_to_id_pairs.push_back({block.getArgument(i), ValueId(i)});
   }
-  
+
+  // Analyze operations in the block
   for (auto& op : block) {
     if (mlir::isa<mlir::linalg::YieldOp>(op)) {
       // Handle yield operation
@@ -181,11 +129,11 @@ mlir::LogicalResult AnalyzeRegion(mlir::Region& mlir_region, Region& result) {
       }
       continue;
     }
-    
+
     RegionOp region_op;
     region_op.result = ValueId(next_id++);
-    
-    // Analyze operation kind
+
+    // Map MLIR operations to our internal representation
     if (mlir::isa<mlir::arith::AddFOp>(op)) {
       region_op.kind = OpKind::kAddF;
     } else if (mlir::isa<mlir::arith::MulFOp>(op)) {
@@ -197,26 +145,13 @@ mlir::LogicalResult AnalyzeRegion(mlir::Region& mlir_region, Region& result) {
     } else if (mlir::isa<mlir::arith::CmpFOp>(op)) {
       auto cmp_op = mlir::cast<mlir::arith::CmpFOp>(op);
       switch (cmp_op.getPredicate()) {
-        case mlir::arith::CmpFPredicate::OGT:
-          region_op.kind = OpKind::kCmpOGT;
-          break;
-        case mlir::arith::CmpFPredicate::OLT:
-          region_op.kind = OpKind::kCmpOLT;
-          break;
-        case mlir::arith::CmpFPredicate::OEQ:
-          region_op.kind = OpKind::kCmpOEQ;
-          break;
-        case mlir::arith::CmpFPredicate::OGE:
-          region_op.kind = OpKind::kCmpOGE;
-          break;
-        case mlir::arith::CmpFPredicate::OLE:
-          region_op.kind = OpKind::kCmpOLE;
-          break;
-        case mlir::arith::CmpFPredicate::ONE:
-          region_op.kind = OpKind::kCmpONE;
-          break;
-        default:
-          return mlir::failure();  // Unsupported comparison
+        case mlir::arith::CmpFPredicate::OGT: region_op.kind = OpKind::kCmpOGT; break;
+        case mlir::arith::CmpFPredicate::OLT: region_op.kind = OpKind::kCmpOLT; break;
+        case mlir::arith::CmpFPredicate::OEQ: region_op.kind = OpKind::kCmpOEQ; break;
+        case mlir::arith::CmpFPredicate::OGE: region_op.kind = OpKind::kCmpOGE; break;
+        case mlir::arith::CmpFPredicate::OLE: region_op.kind = OpKind::kCmpOLE; break;
+        case mlir::arith::CmpFPredicate::ONE: region_op.kind = OpKind::kCmpONE; break;
+        default: return mlir::failure();
       }
     } else if (mlir::isa<mlir::arith::SelectOp>(op)) {
       region_op.kind = OpKind::kSelect;
@@ -231,10 +166,10 @@ mlir::LogicalResult AnalyzeRegion(mlir::Region& mlir_region, Region& result) {
         region_op.f32_imm = float_attr.getValueAsDouble();
       }
     } else {
-      return mlir::failure();  // Unsupported operation
+      return mlir::failure();
     }
-    
-    // Analyze operands
+
+    // Map operands to their ValueIds
     for (auto operand : op.getOperands()) {
       for (const auto& pair : value_to_id_pairs) {
         if (pair.first == operand) {
@@ -243,41 +178,121 @@ mlir::LogicalResult AnalyzeRegion(mlir::Region& mlir_region, Region& result) {
         }
       }
     }
-    
-    // Record the result
+
     value_to_id_pairs.push_back({op.getResult(0), region_op.result});
-    
     result.ops.push_back(region_op);
   }
-  
+
+  return mlir::success();
+}
+
+mlir::LogicalResult AnalyzeLinalgGeneric(mlir::Operation* op, LinalgGeneric& result) {
+  auto generic_op = mlir::dyn_cast<mlir::linalg::GenericOp>(op);
+  if (!generic_op) {
+    return mlir::failure();
+  }
+
+  result = LinalgGeneric{};
+
+  // Analyze iterator types to determine dimensions
+  auto iterator_types = generic_op.getIteratorTypesArray();
+  for (size_t i = 0; i < iterator_types.size(); ++i) {
+    Dim dim;
+    if (failed(AnalyzeDimension(iterator_types[i], i, dim))) {
+      return mlir::failure();
+    }
+    result.dims.push_back(dim);
+  }
+
+  // Analyze inputs and outputs
+  auto inputs = generic_op.getInputs();
+  auto outputs = generic_op.getOutputs();
+  auto indexing_maps = generic_op.getIndexingMapsArray();
+
+  // Process input operands
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    Operand operand;
+    if (failed(AnalyzeOperand(inputs[i], "input" + std::to_string(i), false,
+                             indexing_maps[i], operand))) {
+      return mlir::failure();
+    }
+    result.operands.push_back(operand);
+  }
+
+  // Process output operands
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    Operand operand;
+    if (failed(AnalyzeOperand(outputs[i], "output" + std::to_string(i), true,
+                             indexing_maps[inputs.size() + i], operand))) {
+      return mlir::failure();
+    }
+    result.operands.push_back(operand);
+  }
+
+  // Analyze the region body
+  return AnalyzeRegion(generic_op.getRegion(), result.region);
+}
+
+mlir::LogicalResult Validate(const LinalgGeneric& g) {
+  if (g.dims.empty()) {
+    return mlir::failure();
+  }
+
+  // Validate dimension extents
+  for (const auto& d : g.dims) {
+    if (d.extent < 1) {
+      return mlir::failure();
+    }
+  }
+
+  // Validate operand indexing maps
+  for (const auto& opnd : g.operands) {
+    if (opnd.map.results.size() != opnd.type.shape.size()) {
+      return mlir::failure();
+    }
+
+    for (const auto& e : opnd.map.results) {
+      if (e.kind == AffineExpr::kVar) {
+        if (e.var < 0 || e.var >= static_cast<int>(g.dims.size())) {
+          return mlir::failure();
+        }
+      }
+    }
+  }
+
+  // Validate region structure
+  if (!IsDag(g.region.ops) || !AllYieldsDefined(g.region)) {
+    return mlir::failure();
+  }
+
   return mlir::success();
 }
 
 std::string LinalgGenericToString(const LinalgGeneric& linalg) {
   std::ostringstream oss;
-  
+
   oss << "LinalgGeneric {\n";
-  
-  // Dimensions
+
+  // Print dimensions
   oss << "  dims: [";
   for (size_t i = 0; i < linalg.dims.size(); ++i) {
     if (i > 0) oss << ", ";
-    oss << linalg.dims[i].name << "(" 
-        << (linalg.dims[i].kind == IterKind::kParallel ? "P" : "R") 
+    oss << linalg.dims[i].name << "("
+        << (linalg.dims[i].kind == IterKind::kParallel ? "P" : "R")
         << ":" << linalg.dims[i].extent << ")";
   }
   oss << "]\n";
-  
-  // Operands
+
+  // Print operands
   oss << "  operands: [";
   for (size_t i = 0; i < linalg.operands.size(); ++i) {
     if (i > 0) oss << ", ";
-    oss << linalg.operands[i].name << ":" 
+    oss << linalg.operands[i].name << ":"
         << (linalg.operands[i].is_output ? "out" : "in");
   }
   oss << "]\n";
-  
-  // Region
+
+  // Print region
   oss << "  region: {\n";
   oss << "    args: [";
   for (size_t i = 0; i < linalg.region.args.size(); ++i) {
@@ -285,7 +300,7 @@ std::string LinalgGenericToString(const LinalgGeneric& linalg) {
     oss << "%" << linalg.region.args[i].id;
   }
   oss << "]\n";
-  
+
   oss << "    ops: [";
   for (size_t i = 0; i < linalg.region.ops.size(); ++i) {
     if (i > 0) oss << ", ";
@@ -310,19 +325,18 @@ std::string LinalgGenericToString(const LinalgGeneric& linalg) {
     oss << ")";
   }
   oss << "]\n";
-  
+
   oss << "    yields: [";
   for (size_t i = 0; i < linalg.region.yields.size(); ++i) {
     if (i > 0) oss << ", ";
     oss << "%" << linalg.region.yields[i].id;
   }
   oss << "]\n";
-  
+
   oss << "  }\n";
   oss << "}\n";
-  
+
   return oss.str();
 }
 
-}  // namespace xls
-}  // namespace mlir
+}  // namespace mlir::xls
