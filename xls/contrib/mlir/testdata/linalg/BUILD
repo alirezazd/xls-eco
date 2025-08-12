@@ -80,8 +80,10 @@ cc_test(
 
 cc_test(
     name = "dslx_codegen_test",
-    srcs = ["dslx_emitter_test.cc"],
+    srcs = ["dslx_codegen_test.cc"],
     deps = [
         "//xls/contrib/mlir/transforms/linalg:linalg_all",
     ],
 )
+
+
