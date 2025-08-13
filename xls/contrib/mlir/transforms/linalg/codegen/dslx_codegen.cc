@@ -73,6 +73,8 @@ mlir::LogicalResult DslxCodegen::EmitFunctionHeader(const LinalgGeneric& g,
                                                    const BroadcastAnalysis& A,
                                                    const DslxEmissionContext& ctx) {
   output_ << "#![feature(type_inference_v2)]\n\n";
+  output_ << "import float32;\n\n";
+  output_ << "type F32 = float32::F32;\n\n";
   output_ << "fn " << ctx.function_name << "(";
   
   // Emit input parameters (non-output operands)
@@ -135,6 +137,15 @@ mlir::LogicalResult DslxCodegen::EmitLoops(const LinalgGeneric& g,
     unrolled_dim = up.dims[0].dim;
   }
   
+  // Find the output operand name to use as initial value
+  std::string initial_value = "output0";  // Default fallback
+  for (const auto& operand : g.operands) {
+    if (operand.is_output) {
+      initial_value = operand.name;
+      break;
+    }
+  }
+  
   // Emit nested loops according to schedule
   for (const auto& loop : band.loops) {
     if (loop.dim == unrolled_dim) {
@@ -154,7 +165,11 @@ mlir::LogicalResult DslxCodegen::EmitLoops(const LinalgGeneric& g,
       output_ << inner_ctx.indent() << "// Loop body for dimension " << loop.dim << "\n";
       output_ << inner_ctx.indent() << "result\n";
       
-      output_ << ctx.indent() << "}(result);\n";
+      // Use initial_value for first loop, result for subsequent loops
+      static int loop_count = 0;
+      std::string loop_input = (loop_count == 0) ? initial_value : "result";
+      output_ << ctx.indent() << "}(" << loop_input << ");\n";
+      loop_count++;
     }
   }
   
@@ -257,7 +272,7 @@ std::string DslxCodegen::GetOperandType(const Operand& operand, const BroadcastA
   }
   
   if (is_scalar) {
-    return "f32";
+    return "F32";
   }
   
   // Build tensor type with dimensions
@@ -266,7 +281,7 @@ std::string DslxCodegen::GetOperandType(const Operand& operand, const BroadcastA
     dims.push_back(std::to_string(dim));
   }
   
-  return absl::StrCat("f32[", absl::StrJoin(dims, "]["), "]");
+  return absl::StrCat("F32[", absl::StrJoin(dims, "]["), "]");
 }
 
 std::string DslxCodegen::GetReturnType(const LinalgGeneric& g, const BroadcastAnalysis& A) {
@@ -274,7 +289,13 @@ std::string DslxCodegen::GetReturnType(const LinalgGeneric& g, const BroadcastAn
   std::vector<std::string> output_types;
   for (const auto& operand : g.operands) {
     if (operand.is_output) {
-      output_types.push_back(GetOperandType(operand, A));
+      // For function returns, we need to use 1D arrays (multi-dimensional return types don't work)
+      // Calculate total size for 1D array
+      int64_t total_size = 1;
+      for (int64_t dim : operand.type.shape) {
+        total_size *= dim;
+      }
+      output_types.push_back(absl::StrCat("F32[", total_size, "]"));
     }
   }
   
@@ -290,24 +311,23 @@ std::string DslxCodegen::GetReturnType(const LinalgGeneric& g, const BroadcastAn
 std::string DslxCodegen::BuildZeroTensor(const std::vector<int64_t>& shape,
                                         const DslxEmissionContext& ctx) {
   if (shape.empty()) {
-    return "f32:0.0";
+    return "float32::zero(false)";
   }
   
   if (shape.size() == 1) {
     // 1D zero vector
-    return absl::StrCat("f32[", shape[0], "]:[f32:0.0, ...]");
+    return absl::StrCat("F32[", shape[0], "]:[float32::zero(false), ...]");
   }
   
-  // Multi-dimensional: build nested zero tensors
-  std::string result = absl::StrCat("f32[", shape[0], "]:[");
+  // For function returns, we need to flatten multi-dimensional arrays to 1D
+  // Calculate total size
+  int64_t total_size = 1;
+  for (int64_t dim : shape) {
+    total_size *= dim;
+  }
   
-  // Build inner shape recursively
-  std::vector<int64_t> inner_shape(shape.begin() + 1, shape.end());
-  std::string inner_tensor = BuildZeroTensor(inner_shape, ctx);
-  
-  result += absl::StrCat(inner_tensor, ", ...]");
-  
-  return result;
+  // Return 1D array with total size
+  return absl::StrCat("F32[", total_size, "]:[float32::zero(false), ...]");
 }
 
 std::string DslxCodegen::EmitUpdateCall(const std::string& tensor_name,
