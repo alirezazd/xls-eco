@@ -1316,7 +1316,14 @@ def _mlir_to_xls_ir_impl(ctx):
       DefaultInfo provider
     """
     src = ctx.file.src
-    ir_file = ctx.outputs.ir_file
+    
+    # Handle optional ir_file output using the standard pattern
+    ir_filename = get_output_filename_value(
+        ctx,
+        "ir_file",
+        ctx.attr.name + _IR_FILE_EXTENSION,
+    )
+    ir_file = ctx.actions.declare_file(ir_filename)
     
     # First step: run xls_opt to convert MLIR to XLS dialect
     temp_mlir = ctx.actions.declare_file(ctx.label.name + "_temp.mlir")
