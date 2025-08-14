@@ -515,23 +515,6 @@ class LegalizeTensorFromElementsPattern
   }
 };
 
-// Legalizes `tensor.splat` to `xls.array_splat`.
-class LegalizeTensorSplatPattern
-    : public OpConversionPattern<mlir::tensor::SplatOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(
-      mlir::tensor::SplatOp op, OpAdaptor adaptor,
-      ConversionPatternRewriter& rewriter) const override {
-    auto tensorType = llvm::cast<TensorType>(op.getResult().getType());
-    size_t numElements = tensorType.getNumElements();
-    Type elementType = tensorType.getElementType();
-    auto arrayType = ArrayType::get(op.getContext(), numElements, elementType);
-    rewriter.replaceOpWithNewOp<ArraySplatOp>(op, arrayType, adaptor.getInput());
-    return success();
-  }
-};
-
 class LegalizeTensorArrayTypeFungiblePattern
     : public OpTraitConversionPattern<TensorArrayTypeFungible> {
  public:
@@ -914,7 +897,6 @@ class ScalarizePass : public impl::ScalarizePassBase<ScalarizePass> {
         LegalizeTensorExtractSingleSlicePattern,
         RankReduceTensorExtractSlicePattern,
         LegalizeTensorFromElementsPattern,
-        LegalizeTensorSplatPattern,
         LegalizeTensorInsertSingleSlicePattern,
         LegalizeTensorInsertPattern,
         LegalizeVectorizedCallPattern,
