@@ -439,42 +439,11 @@ BValue convertOp(ArrayOp op, const TranslationState& state, BuilderBase& fb) {
       .value();
 }
 
-::xls::Value nestedArraySplat(ArrayType type, const ::xls::Value& splatValue, BuilderBase& fb) {
-  if (auto arrayType = dyn_cast<ArrayType>(type.getElementType())) {
-    std::vector<::xls::Value> elements(type.getNumElements(),
-                                       nestedArraySplat(arrayType, splatValue, fb));
-    return ::xls::Value::ArrayOwned(std::move(elements));
-  }
-  // For non-nested arrays, create an array with all elements being the splat value
-  std::vector<::xls::Value> arrayElements(type.getNumElements(), splatValue);
-  return ::xls::Value::ArrayOwned(std::move(arrayElements));
-}
-
 BValue convertOp(ArrayZeroOp op, const TranslationState& state,
                  BuilderBase& fb) {
   // TODO(jmolloy): This is only correct for array-of-bits types, not
   // array-of-tuples.
   auto value = nestedArrayZero(op.getType(), fb);
-  return fb.Literal(value, state.getLoc(op));
-}
-
-BValue convertOp(ArraySplatOp op, const TranslationState& state,
-                 BuilderBase& fb) {
-  // Get the scalar value to splat
-  BValue scalarValue = state.getXlsValue(op.getValue());
-  
-  // Convert the scalar BValue to an XLS Value for array construction
-  // This is a simplified approach - for complex cases we might need more sophisticated handling
-  auto constantValue = scalarValue.node()->As<::xls::Literal>();
-  if (!constantValue) {
-    // For non-constant values, we need to construct the array differently
-    // Create an array using repeated elements
-    std::vector<BValue> elements(op.getType().getNumElements(), scalarValue);
-    return fb.Array(elements, scalarValue.GetType(), state.getLoc(op));
-  }
-  
-  // For constant values, use the nestedArraySplat helper
-  auto value = nestedArraySplat(op.getType(), constantValue->value(), fb);
   return fb.Literal(value, state.getLoc(op));
 }
 
@@ -1505,7 +1474,7 @@ FailureOr<BValue> convertFunction(TranslationState& translation_state,
             // Extension operations
             ZeroExtOp, SignExtOp,
             // Array ops.
-            ArrayOp, ArrayZeroOp, ArraySplatOp, ArrayIndexOp, ArrayIndexStaticOp,
+            ArrayOp, ArrayZeroOp, ArrayIndexOp, ArrayIndexStaticOp,
             ArraySliceOp, ArrayUpdateOp, ArrayConcatOp,
             // Tensor ops.
             mlir::tensor::EmptyOp,

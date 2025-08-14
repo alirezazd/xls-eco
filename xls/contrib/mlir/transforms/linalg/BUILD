@@ -17,8 +17,8 @@ package(default_visibility = ["//visibility:public"])
 # Core types library
 cc_library(
     name = "linalg_types",
-    hdrs = ["types/linalg_types.h"],
-    srcs = ["types/linalg_types.cc"],
+    hdrs = ["linalg_types.h"],
+    srcs = ["linalg_types.cc"],
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/hash:hash",
@@ -28,8 +28,8 @@ cc_library(
 # Utility functions library
 cc_library(
     name = "linalg_utils",
-    hdrs = ["utils/helpers.h"],
-    srcs = ["utils/helpers.cc"],
+    hdrs = ["helpers.h"],
+    srcs = ["helpers.cc"],
     deps = [
         ":linalg_types",
         "@llvm-project//mlir:Support",
@@ -41,19 +41,42 @@ cc_library(
 # Enhanced reduction utilities library
 cc_library(
     name = "linalg_reduction_utils",
-    hdrs = ["utils/reduction_utils.h"],
-    srcs = ["utils/reduction_utils.cc"],
+    hdrs = ["reduction_utils.h"],
+    srcs = ["reduction_utils.cc"],
     deps = [
         ":linalg_types",
         "@com_google_absl//absl/types:span",
     ],
 )
 
-# Analysis libraries
+# Evaluation libraries
 cc_library(
-    name = "linalg_analysis",
-    hdrs = ["analysis/linalg_analysis.h"],
-    srcs = ["analysis/linalg_analysis.cc"],
+    name = "linalg_schedule_gen",
+    hdrs = ["schedule_gen.h"],
+    srcs = ["schedule_gen.cc"],
+    deps = [
+        ":linalg_types",
+        ":linalg_utils",
+        ":linalg_eval",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "linalg_unroll_plan_gen",
+    hdrs = ["unroll_plan_gen.h"],
+    srcs = ["unroll_plan_gen.cc"],
+    deps = [
+        ":linalg_types",
+        ":linalg_utils",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "linalg_eval",
+    hdrs = ["linalg_eval.h"],
+    srcs = ["linalg_eval.cc"],
     deps = [
         ":linalg_types",
         ":linalg_utils",
@@ -62,48 +85,14 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "linalg_broadcast",
-    hdrs = ["analysis/broadcast.h"],
-    srcs = ["analysis/broadcast.cc"],
-    deps = [
-        ":linalg_types",
-        ":linalg_analysis",
-        "@llvm-project//mlir:Support",
-    ],
-)
-
-cc_library(
-    name = "linalg_schedule",
-    hdrs = ["analysis/schedule.h"],
-    srcs = ["analysis/schedule.cc"],
-    deps = [
-        ":linalg_types",
-        ":linalg_broadcast",
-        "@llvm-project//mlir:Support",
-    ],
-)
-
-cc_library(
-    name = "linalg_unroll_plan",
-    hdrs = ["analysis/unroll_plan.h"],
-    srcs = ["analysis/unroll_plan.cc"],
-    deps = [
-        ":linalg_types",
-        ":linalg_broadcast",
-        "@llvm-project//mlir:Support",
-    ],
-)
-
 # Codegen libraries
-
 cc_library(
     name = "linalg_lane_ops",
-    hdrs = ["codegen/lane_ops.h"],
-    srcs = ["codegen/lane_ops.cc"],
+    hdrs = ["lane_ops.h"],
+    srcs = ["lane_ops.cc"],
     deps = [
         ":linalg_types",
-        ":linalg_broadcast",
+        ":linalg_eval",
         ":linalg_utils",
         ":linalg_reduction_utils",
         "@llvm-project//mlir:Support",
@@ -112,13 +101,13 @@ cc_library(
 
 cc_library(
     name = "linalg_dslx_codegen",
-    hdrs = ["codegen/dslx_codegen.h"],
-    srcs = ["codegen/dslx_codegen.cc"],
+    hdrs = ["dslx_codegen.h"],
+    srcs = ["dslx_codegen.cc"],
     deps = [
         ":linalg_types",
-        ":linalg_broadcast",
-        ":linalg_schedule",
-        ":linalg_unroll_plan",
+        ":linalg_eval",
+        ":linalg_schedule_gen",
+        ":linalg_unroll_plan_gen",
         ":linalg_reduction_utils",
         "@com_google_absl//absl/strings",
     ],
@@ -126,12 +115,12 @@ cc_library(
 
 cc_library(
     name = "linalg_reduction",
-    hdrs = ["codegen/reduction.h"],
-    srcs = ["codegen/reduction.cc"],
+    hdrs = ["reduction.h"],
+    srcs = ["reduction.cc"],
     deps = [
         ":linalg_types",
-        ":linalg_broadcast",
-        ":linalg_schedule",
+        ":linalg_eval",
+        ":linalg_schedule_gen",
         ":linalg_utils",
         ":linalg_reduction_utils",
         ":linalg_lane_ops",
@@ -146,10 +135,9 @@ cc_library(
         ":linalg_types",
         ":linalg_utils",
         ":linalg_reduction_utils",
-        ":linalg_analysis",
-        ":linalg_broadcast",
-        ":linalg_schedule",
-        ":linalg_unroll_plan",
+        ":linalg_eval",
+        ":linalg_schedule_gen",
+        ":linalg_unroll_plan_gen",
         ":linalg_lane_ops",
         ":linalg_dslx_codegen",
         ":linalg_reduction",
@@ -174,6 +162,43 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
+    ],
+)
+
+# Test target for EvalOperand
+cc_binary(
+    name = "simple_test",
+    srcs = ["simple_test.cc"],
+    deps = [
+        ":linalg_eval",
+        ":linalg_types",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Core",
+    ],
+)
+
+# Test target for operand evaluation
+cc_binary(
+    name = "test_eval_operand",
+    srcs = ["test_eval_operand.cc"],
+    deps = [
+        ":linalg_eval",
+        ":linalg_types",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Core",
     ],
 )
 
