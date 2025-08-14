@@ -1,0 +1,36 @@
+// Copyright 2025 The XLS Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_EVAL_UNROLL_PLAN_EVAL_H_
+#define XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_EVAL_UNROLL_PLAN_EVAL_H_
+
+#include "mlir/Support/LogicalResult.h"
+#include "xls/contrib/mlir/transforms/linalg/linalg_types.h"
+
+namespace mlir::xls {
+
+// Generates unroll plans for linalg.generic operations.
+mlir::LogicalResult GenerateUnrollPlan(const LinalgGeneric& g,
+                                      const BroadcastAnalysis& A,
+                                      UnrollPlan& result);
+
+// Generates unroll plans with specific configuration.
+mlir::LogicalResult GenerateUnrollPlan(const LinalgGeneric& g,
+                                      const BroadcastAnalysis& A,
+                                      const LinalgCodegenConfig& config,
+                                      UnrollPlan& result);
+
+}  // namespace mlir::xls
+
+#endif  // XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_EVAL_UNROLL_PLAN_EVAL_H_

@@ -20,6 +20,10 @@
 
 namespace mlir {
 
+// Include the generated pass options
+#define GEN_PASS_DECL_LINALGTOXLSPASS
+#include "xls/contrib/mlir/transforms/passes.h.inc"
+
 // Populates linalg.generic conversion patterns for XLS lowering.
 // This includes patterns for:
 // - Element-wise operations to arith operations

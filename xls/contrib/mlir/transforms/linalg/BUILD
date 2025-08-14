@@ -17,7 +17,10 @@ package(default_visibility = ["//visibility:public"])
 # Core types library
 cc_library(
     name = "linalg_types",
-    hdrs = ["linalg_types.h"],
+    hdrs = [
+        "linalg_types.h",
+        "linalg_config.h",
+    ],
     srcs = ["linalg_types.cc"],
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",
