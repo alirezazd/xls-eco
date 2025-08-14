@@ -29,7 +29,7 @@
 
 namespace mlir::xls {
 
-bool IsDag(const std::vector<RegionOp>& ops) {
+mlir::LogicalResult IsDag(const std::vector<RegionOp>& ops) {
   std::set<ValueId> defined_values;
 
   for (size_t i = 0; i < ops.size(); ++i) {
@@ -39,16 +39,16 @@ bool IsDag(const std::vector<RegionOp>& ops) {
   for (const auto& op : ops) {
     for (const auto& input : op.inputs) {
       if (defined_values.find(input) == defined_values.end()) {
-        return false;
+        return mlir::failure();
       }
     }
     defined_values.insert(op.result);
   }
 
-  return true;
+  return mlir::success();
 }
 
-bool AllYieldsDefined(const Region& region) {
+mlir::LogicalResult AllYieldsDefined(const Region& region) {
   std::set<ValueId> defined_values;
 
   for (const auto& arg : region.args) {
@@ -61,14 +61,14 @@ bool AllYieldsDefined(const Region& region) {
 
   for (const auto& yield : region.yields) {
     if (defined_values.find(yield) == defined_values.end()) {
-      return false;
+      return mlir::failure();
     }
   }
 
-  return true;
+  return mlir::success();
 }
 
-AffineMap EvalAffineMap(mlir::AffineMap mlir_map) {
+FailureOr<AffineMap> EvalAffineMap(mlir::AffineMap mlir_map) {
   AffineMap result;
 
   for (auto expr : mlir_map.getResults()) {
@@ -79,13 +79,13 @@ AffineMap EvalAffineMap(mlir::AffineMap mlir_map) {
         affine_expr.kind = AffineExpr::kConst0;
         affine_expr.var = 0;
       } else {
-        return AffineMap{};
+        return failure();
       }
     } else if (auto dim_expr = llvm::dyn_cast<mlir::AffineDimExpr>(expr)) {
       affine_expr.kind = AffineExpr::kVar;
       affine_expr.var = dim_expr.getPosition();
     } else {
-      return AffineMap{};
+      return failure();
     }
 
     result.results.push_back(affine_expr);
@@ -116,7 +116,12 @@ FailureOr<Operand> EvalOperand(mlir::Value value, const std::string& name,
   Operand operand;
   operand.name = name;
   operand.is_output = is_output;
-  operand.map = EvalAffineMap(indexing_map);
+  
+  auto map = EvalAffineMap(indexing_map);
+  if (failed(map)) {
+    return failure();
+  }
+  operand.map = std::move(*map);
 
   if (auto tensor_type =
           llvm::dyn_cast<mlir::RankedTensorType>(value.getType())) {
@@ -246,7 +251,7 @@ FailureOr<std::vector<Dim>> BuildDimensions(
     if (failed(dim)) {
       return failure();
     }
-    dims.push_back(*dim);
+    dims.push_back(std::move(*dim));
   }
   return dims;
 }
@@ -265,7 +270,7 @@ FailureOr<std::vector<Operand>> BuildOperands(
     if (failed(operand)) {
       return failure();
     }
-    operands.push_back(*operand);
+    operands.push_back(std::move(*operand));
   }
 
   for (size_t i = 0; i < outputs.size(); ++i) {
@@ -274,7 +279,7 @@ FailureOr<std::vector<Operand>> BuildOperands(
     if (failed(operand)) {
       return failure();
     }
-    operands.push_back(*operand);
+    operands.push_back(std::move(*operand));
   }
   return operands;
 }
@@ -485,7 +490,7 @@ mlir::LogicalResult Validate(const LinalgGeneric& g) {
     }
   }
 
-  if (!IsDag(g.region.ops) || !AllYieldsDefined(g.region)) {
+  if (!IsDag(g.region.ops).succeeded() || !AllYieldsDefined(g.region).succeeded()) {
     return mlir::failure();
   }
 

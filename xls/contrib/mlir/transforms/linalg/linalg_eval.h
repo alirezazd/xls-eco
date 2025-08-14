@@ -32,7 +32,10 @@ struct BroadcastAnalysis;
 struct OutputShapeInfo;
 struct OperandIndexFn;
 
-AffineMap EvalAffineMap(mlir::AffineMap mlir_map);
+mlir::LogicalResult IsDag(const std::vector<RegionOp>& ops);
+mlir::LogicalResult AllYieldsDefined(const Region& region);
+
+FailureOr<AffineMap> EvalAffineMap(mlir::AffineMap mlir_map);
 
 FailureOr<Dim> EvalDimension(mlir::utils::IteratorType iterator_type,
                              size_t dim_index);
