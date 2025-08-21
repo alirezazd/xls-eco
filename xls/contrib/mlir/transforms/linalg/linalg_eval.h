@@ -1,3 +1,17 @@
+// Copyright 2025 The XLS Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #ifndef XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_LINALG_EVAL_H_
 #define XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_LINALG_EVAL_H_
 
@@ -24,48 +38,22 @@ enum class IteratorType : uint32_t;
 
 namespace mlir::xls {
 
-struct Dim;
-struct Operand;
-struct Region;
-struct LinalgGeneric;
-struct BroadcastAnalysis;
+// Forward declarations
+struct LinalgEvalResults;
+struct InputShapeInfo;
 struct OutputShapeInfo;
-struct OperandIndexFn;
+struct BroadcastAnalysis;
+struct LinalgGeneric;
 
-mlir::LogicalResult IsDag(const std::vector<RegionOp>& ops);
-mlir::LogicalResult AllYieldsDefined(const Region& region);
-
-FailureOr<AffineMap> EvalAffineMap(mlir::AffineMap mlir_map);
-
-FailureOr<Dim> EvalDimension(mlir::utils::IteratorType iterator_type,
-                             size_t dim_index);
-FailureOr<Operand> EvalOperand(mlir::Value value, const std::string& name,
-                               bool is_output, mlir::AffineMap indexing_map);
-FailureOr<Region> EvalRegion(mlir::Region& mlir_region);
-
-FailureOr<std::vector<Dim>> BuildDimensions(
-    mlir::linalg::GenericOp& generic_op);
-FailureOr<std::vector<Operand>> BuildOperands(
-    mlir::linalg::GenericOp& generic_op);
-
+// Main function to evaluate Linalg generic operations
 FailureOr<LinalgEvalResults> EvalLinalgGeneric(mlir::Operation* op);
 
-mlir::LogicalResult Validate(const LinalgGeneric& g);
+// Helper function to derive input and output shapes
+FailureOr<std::pair<std::vector<InputShapeInfo>, std::vector<OutputShapeInfo>>> 
+DeriveShapes(const LinalgGeneric& linalg, const BroadcastAnalysis& broadcast, mlir::Operation* op);
 
-FailureOr<std::vector<std::vector<bool>>> EvalOperandDimensionRefs(
-    const LinalgGeneric& g);
-FailureOr<std::vector<OperandIndexFn>> EvalOperandIndexers(
-    const LinalgGeneric& g);
-FailureOr<std::vector<SizeExpr>> EvalLoopExtents(
-    const LinalgGeneric& g,
-    const std::vector<std::vector<bool>>& operand_refs_dim);
-
-FailureOr<BroadcastAnalysis> EvalBroadcast(const LinalgGeneric& g);
-FailureOr<OutputShapeInfo> DeriveOutputShape(const LinalgGeneric& g,
-                                             const BroadcastAnalysis& A,
-                                             int out_operand_index);
-
-std::string LinalgGenericToString(const LinalgGeneric& linalg);
+// Helper function to validate reduction operations
+LogicalResult ValidateReduction(const LinalgGeneric& linalg, mlir::Operation* op);
 
 }  // namespace mlir::xls
 

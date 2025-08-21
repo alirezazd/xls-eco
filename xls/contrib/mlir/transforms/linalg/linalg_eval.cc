@@ -20,17 +20,55 @@
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Support/LogicalResult.h"
+#include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "xls/contrib/mlir/transforms/linalg/helpers.h"
 #include "xls/contrib/mlir/transforms/linalg/linalg_types.h"
 
 namespace mlir::xls {
 
-mlir::LogicalResult IsDag(const std::vector<RegionOp>& ops) {
+// Internal function declarations (moved from header)
+LogicalResult IsDag(const std::vector<RegionOp>& ops);
+LogicalResult AllYieldsDefined(const Region& region);
+FailureOr<AffineMap> EvalAffineMap(mlir::AffineMap mlir_map);
+FailureOr<Dim> EvalDimension(mlir::utils::IteratorType iterator_type,
+                             size_t dim_index);
+FailureOr<Operand> EvalOperand(mlir::Value value, const std::string& name,
+                               bool is_output, mlir::AffineMap indexing_map);
+FailureOr<Region> EvalRegion(mlir::Region& mlir_region);
+FailureOr<std::vector<Dim>> BuildDimensions(
+    mlir::linalg::GenericOp& generic_op);
+FailureOr<std::vector<Operand>> BuildOperands(
+    mlir::linalg::GenericOp& generic_op);
+LogicalResult UpdateExtents(LinalgGeneric& linalg,
+                            const BroadcastAnalysis& broadcast);
+LogicalResult Validate(const LinalgGeneric& g, mlir::Operation* op);
+FailureOr<std::vector<std::vector<bool>>> EvalOperandRefs(
+    const LinalgGeneric& g, mlir::Operation* op);
+FailureOr<std::vector<OperandIndexFn>> EvalIndexers(const LinalgGeneric& g,
+                                                    mlir::Operation* op);
+FailureOr<std::vector<SizeExpr>> EvalLoopExtents(
+    const LinalgGeneric& g,
+    const std::vector<std::vector<bool>>& operand_refs_dim,
+    mlir::Operation* op);
+FailureOr<BroadcastAnalysis> EvalBroadcast(const LinalgGeneric& g,
+                                           mlir::Operation* op);
+LogicalResult DeriveInputShape(const LinalgGeneric& g,
+                               const BroadcastAnalysis& A, int operand_index,
+                               InputShapeInfo& info, mlir::Operation* op);
+LogicalResult DeriveOutputShape(const LinalgGeneric& g,
+                                const BroadcastAnalysis& A,
+                                int out_operand_index, OutputShapeInfo& info,
+                                mlir::Operation* op);
+FailureOr<std::string> ExtractName(mlir::Operation* op);
+
+LogicalResult IsDag(const std::vector<RegionOp>& ops) {
   std::set<ValueId> defined_values;
 
   for (size_t i = 0; i < ops.size(); ++i) {
@@ -40,16 +78,16 @@ mlir::LogicalResult IsDag(const std::vector<RegionOp>& ops) {
   for (const auto& op : ops) {
     for (const auto& input : op.inputs) {
       if (defined_values.find(input) == defined_values.end()) {
-        return mlir::failure();
+        return failure();
       }
     }
     defined_values.insert(op.result);
   }
 
-  return mlir::success();
+  return success();
 }
 
-mlir::LogicalResult AllYieldsDefined(const Region& region) {
+LogicalResult AllYieldsDefined(const Region& region) {
   std::set<ValueId> defined_values;
 
   for (const auto& arg : region.args) {
@@ -62,11 +100,11 @@ mlir::LogicalResult AllYieldsDefined(const Region& region) {
 
   for (const auto& yield : region.yields) {
     if (defined_values.find(yield) == defined_values.end()) {
-      return mlir::failure();
+      return failure();
     }
   }
 
-  return mlir::success();
+  return success();
 }
 
 FailureOr<AffineMap> EvalAffineMap(mlir::AffineMap mlir_map) {
@@ -117,7 +155,7 @@ FailureOr<Operand> EvalOperand(mlir::Value value, const std::string& name,
   Operand operand;
   operand.name = name;
   operand.is_output = is_output;
-  
+
   auto map = EvalAffineMap(indexing_map);
   if (failed(map)) {
     return failure();
@@ -275,8 +313,14 @@ FailureOr<std::vector<Operand>> BuildOperands(
   }
 
   for (size_t i = 0; i < outputs.size(); ++i) {
-    auto operand = EvalOperand(outputs[i], "output" + std::to_string(i), true,
-                               indexing_maps[inputs.size() + i]);
+    // Use simple output names: output, output_flat, etc.
+    std::string name = "output";
+    if (i > 0) {
+      name += "_flat";
+    }
+
+    auto operand =
+        EvalOperand(outputs[i], name, true, indexing_maps[inputs.size() + i]);
     if (failed(operand)) {
       return failure();
     }
@@ -285,7 +329,7 @@ FailureOr<std::vector<Operand>> BuildOperands(
   return operands;
 }
 
-void UpdateDimensionExtents(LinalgGeneric& linalg,
+LogicalResult UpdateExtents(LinalgGeneric& linalg,
                             const BroadcastAnalysis& broadcast) {
   for (size_t i = 0;
        i < linalg.dims.size() && i < broadcast.loop_extents.size(); ++i) {
@@ -293,32 +337,7 @@ void UpdateDimensionExtents(LinalgGeneric& linalg,
       linalg.dims[i].extent = broadcast.loop_extents[i].getConstant();
     }
   }
-}
-
-bool HasReductionDimensions(const LinalgGeneric& linalg) {
-  for (const auto& dim : linalg.dims) {
-    if (dim.kind == IterKind::kReduction) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool OutputReferencesReductionDimension(const LinalgGeneric& linalg) {
-  for (const auto& operand : linalg.operands) {
-    if (!operand.is_output) continue;
-
-    for (const auto& expr : operand.map.results) {
-      if (expr.kind != AffineExpr::kVar) continue;
-
-      size_t dim_idx = static_cast<size_t>(expr.var);
-      if (dim_idx < linalg.dims.size() &&
-          linalg.dims[dim_idx].kind == IterKind::kReduction) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return success();
 }
 
 FailureOr<LinalgEvalResults> EvalLinalgGeneric(mlir::Operation* op) {
@@ -328,8 +347,6 @@ FailureOr<LinalgEvalResults> EvalLinalgGeneric(mlir::Operation* op) {
   }
 
   BroadcastAnalysis broadcast;
-  bool has_reduction = false;
-  bool is_valid_reduction = false;
 
   auto dims = BuildDimensions(generic_op);
   if (failed(dims)) {
@@ -353,67 +370,98 @@ FailureOr<LinalgEvalResults> EvalLinalgGeneric(mlir::Operation* op) {
   linalg.operands = std::move(*operands);
   linalg.region = std::move(*region);
 
-  auto broadcast_result = EvalBroadcast(linalg);
+  // Validate the linalg structure
+  if (failed(Validate(linalg, op))) {
+    return failure();
+  }
+
+  auto broadcast_result = EvalBroadcast(linalg, op);
   if (failed(broadcast_result)) {
-    return op->emitError("Failed to evaluate broadcast. Parsed structure:\n")
-           << LinalgGenericToString(linalg);
+    return failure();
   }
   broadcast = std::move(*broadcast_result);
 
-  UpdateDimensionExtents(linalg, broadcast);
-
-  has_reduction = HasReductionDimensions(linalg);
-
-  if (has_reduction) {
-    if (OutputReferencesReductionDimension(linalg)) {
-      return op->emitError(
-                 "Operation is not a valid reduction pattern (output "
-                 "references reduction dimension). Structure:\n")
-             << LinalgGenericToString(linalg);
-    }
-    is_valid_reduction = true;
+  if (failed(UpdateExtents(linalg, broadcast))) {
+    return failure();
   }
 
-  return LinalgEvalResults{std::move(linalg), std::move(broadcast),
-                           has_reduction, is_valid_reduction};
+  // Derive shapes for all operands
+  auto shapes_result = DeriveShapes(linalg, broadcast, op);
+  if (failed(shapes_result)) {
+    return failure();
+  }
+
+  // Validate reduction operations
+  if (failed(ValidateReduction(linalg, op))) {
+    return failure();
+  }
+
+  auto function_name_result = ExtractName(op);
+  if (failed(function_name_result)) {
+    return failure();
+  }
+  std::string function_name = std::move(*function_name_result);
+  return LinalgEvalResults{function_name, std::move(linalg),
+                           std::move(broadcast), std::move(*shapes_result)};
 }
 
-
-
-mlir::LogicalResult Validate(const LinalgGeneric& g) {
+LogicalResult Validate(const LinalgGeneric& g, mlir::Operation* op) {
   if (g.dims.empty()) {
-    return mlir::failure();
+    return op->emitError("LinalgGeneric has no dimensions. Structure:\n")
+           << LinalgGenericToString(g);
   }
 
-  for (const auto& d : g.dims) {
+  for (size_t i = 0; i < g.dims.size(); ++i) {
+    const auto& d = g.dims[i];
     if (d.extent < 1) {
-      return mlir::failure();
+      return op->emitError("Dimension ")
+             << i << " has invalid extent " << d.extent
+             << " (must be >= 1). Structure:\n"
+             << LinalgGenericToString(g);
     }
   }
 
-  for (const auto& opnd : g.operands) {
+  for (size_t i = 0; i < g.operands.size(); ++i) {
+    const auto& opnd = g.operands[i];
     if (opnd.map.results.size() != opnd.type.shape.size()) {
-      return mlir::failure();
+      return op->emitError("Operand ")
+             << i << " has mismatched affine map results ("
+             << opnd.map.results.size() << ") and tensor shape ("
+             << opnd.type.shape.size() << "). Structure:\n"
+             << LinalgGenericToString(g);
     }
 
-    for (const auto& e : opnd.map.results) {
+    for (size_t j = 0; j < opnd.map.results.size(); ++j) {
+      const auto& e = opnd.map.results[j];
       if (e.kind == AffineExpr::kVar) {
         if (e.var < 0 || e.var >= static_cast<int>(g.dims.size())) {
-          return mlir::failure();
+          return op->emitError("Operand ")
+                 << i << " affine expression " << j
+                 << " references invalid dimension " << e.var
+                 << " (valid range: 0-" << (g.dims.size() - 1)
+                 << "). Structure:\n"
+                 << LinalgGenericToString(g);
         }
       }
     }
   }
 
-  if (!IsDag(g.region.ops).succeeded() || !AllYieldsDefined(g.region).succeeded()) {
-    return mlir::failure();
+  if (!IsDag(g.region.ops).succeeded()) {
+    return op->emitError(
+               "Region operations do not form a valid DAG. Structure:\n")
+           << LinalgGenericToString(g);
   }
 
-  return mlir::success();
+  if (!AllYieldsDefined(g.region).succeeded()) {
+    return op->emitError("Region has undefined yield values. Structure:\n")
+           << LinalgGenericToString(g);
+  }
+
+  return success();
 }
 
-FailureOr<std::vector<std::vector<bool>>> EvalOperandDimensionRefs(
-    const LinalgGeneric& g) {
+FailureOr<std::vector<std::vector<bool>>> EvalOperandRefs(
+    const LinalgGeneric& g, mlir::Operation* op) {
   const size_t D = g.dims.size();
   const size_t O = g.operands.size();
 
@@ -424,7 +472,11 @@ FailureOr<std::vector<std::vector<bool>>> EvalOperandDimensionRefs(
     const auto& opnd = g.operands[o];
     const size_t R = opnd.type.shape.size();
     if (R != opnd.map.results.size()) {
-      return mlir::failure();
+      return op->emitError("Operand ")
+             << o << " has mismatched affine map results ("
+             << opnd.map.results.size() << ") and tensor shape (" << R
+             << "). Structure:\n"
+             << LinalgGenericToString(g);
     }
 
     for (size_t axis = 0; axis < R; ++axis) {
@@ -434,7 +486,11 @@ FailureOr<std::vector<std::vector<bool>>> EvalOperandDimensionRefs(
         case AffineExpr::kVar: {
           int d = e.var;
           if (d < 0 || static_cast<size_t>(d) >= D) {
-            return mlir::failure();
+            return op->emitError("Operand ")
+                   << o << " affine expression " << axis
+                   << " references invalid dimension " << d
+                   << " (valid range: 0-" << (D - 1) << "). Structure:\n"
+                   << LinalgGenericToString(g);
           }
           operand_refs_dim[o][d] = true;
           break;
@@ -445,7 +501,11 @@ FailureOr<std::vector<std::vector<bool>>> EvalOperandDimensionRefs(
         }
 
         default: {
-          return mlir::failure();
+          return op->emitError("Operand ")
+                 << o << " affine expression " << axis
+                 << " has unsupported kind " << static_cast<int>(e.kind)
+                 << ". Structure:\n"
+                 << LinalgGenericToString(g);
         }
       }
     }
@@ -454,8 +514,8 @@ FailureOr<std::vector<std::vector<bool>>> EvalOperandDimensionRefs(
   return operand_refs_dim;
 }
 
-FailureOr<std::vector<OperandIndexFn>> EvalOperandIndexers(
-    const LinalgGeneric& g) {
+FailureOr<std::vector<OperandIndexFn>> EvalIndexers(const LinalgGeneric& g,
+                                                    mlir::Operation* op) {
   const size_t D = g.dims.size();
   const size_t O = g.operands.size();
 
@@ -465,7 +525,11 @@ FailureOr<std::vector<OperandIndexFn>> EvalOperandIndexers(
     const auto& opnd = g.operands[o];
     const size_t R = opnd.type.shape.size();
     if (R != opnd.map.results.size()) {
-      return mlir::failure();
+      return op->emitError("Operand ")
+             << o << " has mismatched affine map results ("
+             << opnd.map.results.size() << ") and tensor shape (" << R
+             << "). Structure:\n"
+             << LinalgGenericToString(g);
     }
     indexers[o].results.resize(R);
 
@@ -478,11 +542,21 @@ FailureOr<std::vector<OperandIndexFn>> EvalOperandIndexers(
         case AffineExpr::kVar: {
           int d = e.var;
           if (d < 0 || static_cast<size_t>(d) >= D) {
-            return mlir::failure();
+            return op->emitError("Operand ")
+                   << o << " affine expression " << axis
+                   << " references invalid dimension " << d
+                   << " (valid range: 0-" << (D - 1) << "). Structure:\n"
+                   << LinalgGenericToString(g);
           }
 
           if (used_dims[d]) {
-            return mlir::failure();
+            return op->emitError("Operand ")
+                   << o << " affine expression " << axis
+                   << " references dimension " << d
+                   << " which is already used. "
+                   << "Each dimension can only be referenced once per operand. "
+                      "Structure:\n"
+                   << LinalgGenericToString(g);
           }
           used_dims[d] = true;
 
@@ -492,14 +566,23 @@ FailureOr<std::vector<OperandIndexFn>> EvalOperandIndexers(
 
         case AffineExpr::kConst0: {
           if (opnd.type.shape[axis] != 1) {
-            return mlir::failure();
+            return op->emitError("Operand ")
+                   << o << " affine expression " << axis
+                   << " is constant 0 but tensor shape at axis " << axis
+                   << " is " << opnd.type.shape[axis]
+                   << " (must be 1). Structure:\n"
+                   << LinalgGenericToString(g);
           }
           indexers[o].results[axis] = std::monostate{};
           break;
         }
 
         default: {
-          return mlir::failure();
+          return op->emitError("Operand ")
+                 << o << " affine expression " << axis
+                 << " has unsupported kind " << static_cast<int>(e.kind)
+                 << ". Structure:\n"
+                 << LinalgGenericToString(g);
         }
       }
     }
@@ -510,7 +593,8 @@ FailureOr<std::vector<OperandIndexFn>> EvalOperandIndexers(
 
 FailureOr<std::vector<SizeExpr>> EvalLoopExtents(
     const LinalgGeneric& g,
-    const std::vector<std::vector<bool>>& operand_refs_dim) {
+    const std::vector<std::vector<bool>>& operand_refs_dim,
+    mlir::Operation* op) {
   const size_t D = g.dims.size();
   const size_t O = g.operands.size();
 
@@ -525,7 +609,11 @@ FailureOr<std::vector<SizeExpr>> EvalLoopExtents(
       if (e.kind == AffineExpr::kVar) {
         int d = e.var;
         if (d < 0 || static_cast<size_t>(d) >= D) {
-          return mlir::failure();
+          return op->emitError("Operand ")
+                 << o << " affine expression " << axis
+                 << " references invalid dimension " << d << " (valid range: 0-"
+                 << (D - 1) << "). Structure:\n"
+                 << LinalgGenericToString(g);
         }
         SizeExpr size = SizeExpr(opnd.type.shape[axis]);
         seen_sizes[d].push_back(size);
@@ -558,15 +646,30 @@ FailureOr<std::vector<SizeExpr>> EvalLoopExtents(
       } else {
         if (size.isConstant() && unique_non_one_size.isConstant()) {
           if (size.getConstant() != unique_non_one_size.getConstant()) {
-            return mlir::failure();
+            return op->emitError("Dimension ")
+                   << d << " has conflicting sizes: " << size.getConstant()
+                   << " and " << unique_non_one_size.getConstant()
+                   << ". All operands must agree on dimension sizes. "
+                      "Structure:\n"
+                   << LinalgGenericToString(g);
           }
         } else if (size.isConstant() && !unique_non_one_size.isConstant()) {
           if (size.getConstant() != 1) {
-            return mlir::failure();
+            return op->emitError("Dimension ")
+                   << d << " has conflicting sizes: "
+                   << "symbolic " << unique_non_one_size.getSymbolic()
+                   << " and constant " << size.getConstant()
+                   << " (must be 1 for broadcast). Structure:\n"
+                   << LinalgGenericToString(g);
           }
         } else if (!size.isConstant() && unique_non_one_size.isConstant()) {
           if (unique_non_one_size.getConstant() != 1) {
-            return mlir::failure();
+            return op->emitError("Dimension ")
+                   << d << " has conflicting sizes: "
+                   << "constant " << unique_non_one_size.getConstant()
+                   << " and symbolic " << size.getSymbolic()
+                   << " (must be 1 for broadcast). Structure:\n"
+                   << LinalgGenericToString(g);
           }
           unique_non_one_size = size;
         }
@@ -579,7 +682,8 @@ FailureOr<std::vector<SizeExpr>> EvalLoopExtents(
   return loop_extents;
 }
 
-FailureOr<BroadcastAnalysis> EvalBroadcast(const LinalgGeneric& g) {
+FailureOr<BroadcastAnalysis> EvalBroadcast(const LinalgGeneric& g,
+                                           mlir::Operation* op) {
   const size_t D = g.dims.size();
   const size_t O = g.operands.size();
 
@@ -589,25 +693,27 @@ FailureOr<BroadcastAnalysis> EvalBroadcast(const LinalgGeneric& g) {
   result.dims.operand_varies.resize(O, std::vector<bool>(D, false));
   result.indexers.resize(O);
 
-  auto operand_refs_dim = EvalOperandDimensionRefs(g);
+  auto operand_refs_dim = EvalOperandRefs(g, op);
   if (failed(operand_refs_dim)) {
-    return mlir::failure();
+    return failure();
   }
 
-  auto indexers = EvalOperandIndexers(g);
+  auto indexers = EvalIndexers(g, op);
   if (failed(indexers)) {
-    return mlir::failure();
+    return failure();
   }
 
   result.indexers = std::move(*indexers);
 
-  auto loop_extents = EvalLoopExtents(g, *operand_refs_dim);
+  auto loop_extents = EvalLoopExtents(g, *operand_refs_dim, op);
   if (failed(loop_extents)) {
-    return mlir::failure();
+    return failure();
   }
 
   if (loop_extents->size() != D) {
-    return mlir::failure();
+    return op->emitError("Loop extents size mismatch: expected ")
+           << D << " but got " << loop_extents->size() << ". Structure:\n"
+           << LinalgGenericToString(g);
   }
 
   result.loop_extents = std::move(*loop_extents);
@@ -635,18 +741,57 @@ FailureOr<BroadcastAnalysis> EvalBroadcast(const LinalgGeneric& g) {
   return result;
 }
 
-mlir::LogicalResult DeriveOutputShape(const LinalgGeneric& g,
-                                      const BroadcastAnalysis& A,
-                                      int out_operand_index,
-                                      OutputShapeInfo& info) {
+LogicalResult DeriveInputShape(const LinalgGeneric& g,
+                               const BroadcastAnalysis& A, int operand_index,
+                               InputShapeInfo& info, mlir::Operation* op) {
+  if (operand_index < 0 ||
+      operand_index >= static_cast<int>(g.operands.size())) {
+    return op->emitError("Invalid operand index ")
+           << operand_index << " (valid range: 0-" << (g.operands.size() - 1)
+           << "). Structure:\n"
+           << LinalgGenericToString(g);
+  }
+
+  const auto& operand = g.operands[operand_index];
+  if (operand.is_output) {
+    return op->emitError("Operand ")
+           << operand_index
+           << " is marked as output but should be input. Structure:\n"
+           << LinalgGenericToString(g);
+  }
+
+  const int R = operand.type.shape.size();
+  info.in_shape.resize(R);
+
+  // Build input shape from MLIR tensor dimensions (keep real shape)
+  for (int axis = 0; axis < R; ++axis) {
+    info.in_shape[axis] = SizeExpr(operand.type.shape[axis]);
+  }
+
+  // Store same shape for DSLX (reversal will be done in codegen)
+  info.dslx_shape = info.in_shape;
+
+  return success();
+}
+
+LogicalResult DeriveOutputShape(const LinalgGeneric& g,
+                                const BroadcastAnalysis& A,
+                                int out_operand_index, OutputShapeInfo& info,
+                                mlir::Operation* op) {
   if (out_operand_index < 0 ||
       out_operand_index >= static_cast<int>(g.operands.size())) {
-    return mlir::failure();
+    return op->emitError("Invalid output operand index ")
+           << out_operand_index << " (valid range: 0-"
+           << (g.operands.size() - 1) << "). Structure:\n"
+           << LinalgGenericToString(g);
   }
 
   const auto& out = g.operands[out_operand_index];
   if (!out.is_output) {
-    return mlir::failure();
+    return op->emitError("Operand ")
+           << out_operand_index
+           << " is marked as input but should be output. Structure:\n"
+           << LinalgGenericToString(g);
   }
 
   const int D = g.dims.size();
@@ -656,18 +801,105 @@ mlir::LogicalResult DeriveOutputShape(const LinalgGeneric& g,
   for (int axis = 0; axis < R; ++axis) {
     const auto& e = out.map.results[axis];
     if (e.kind != AffineExpr::kVar) {
-      return mlir::failure();
+      return op->emitError("Output operand ")
+             << out_operand_index << " affine expression " << axis
+             << " is not a variable (kind: " << static_cast<int>(e.kind)
+             << "). Output affine maps must only use variables. Structure:\n"
+             << LinalgGenericToString(g);
     }
 
     int d = e.var;
-    if (d < 0 || d >= D || g.dims[d].kind != IterKind::kParallel) {
-      return mlir::failure();
+    if (d < 0 || d >= D) {
+      return op->emitError("Output operand ")
+             << out_operand_index << " affine expression " << axis
+             << " references invalid dimension " << d << " (valid range: 0-"
+             << (D - 1) << "). Structure:\n"
+             << LinalgGenericToString(g);
+    }
+    if (g.dims[d].kind != IterKind::kParallel) {
+      return op->emitError("Output operand ")
+             << out_operand_index << " affine expression " << axis
+             << " references reduction dimension " << d
+             << ". Output affine maps can only reference parallel dimensions. "
+                "Structure:\n"
+             << LinalgGenericToString(g);
     }
 
     info.out_shape[axis] = A.loop_extents[d];
   }
 
-  return mlir::success();
+  return success();
+}
+
+FailureOr<std::pair<std::vector<InputShapeInfo>, std::vector<OutputShapeInfo>>>
+DeriveShapes(const LinalgGeneric& linalg, const BroadcastAnalysis& broadcast,
+             mlir::Operation* op) {
+  std::vector<InputShapeInfo> input_shapes;
+  std::vector<OutputShapeInfo> output_shapes;
+
+  // Derive shapes for all operands (inputs and outputs)
+  for (size_t i = 0; i < linalg.operands.size(); ++i) {
+    if (!linalg.operands[i].is_output) {
+      // Handle input operand
+      InputShapeInfo input_shape;
+      if (failed(DeriveInputShape(linalg, broadcast, i, input_shape, op))) {
+        return op->emitError("Failed to derive input shape for operand ")
+               << i << ". Structure:\n"
+               << LinalgGenericToString(linalg);
+      }
+      input_shapes.push_back(std::move(input_shape));
+    } else {
+      // Handle output operand
+      OutputShapeInfo output_shape;
+      if (failed(DeriveOutputShape(linalg, broadcast, i, output_shape, op))) {
+        return op->emitError("Failed to derive output shape for operand ")
+               << i << ". Structure:\n"
+               << LinalgGenericToString(linalg);
+      }
+      output_shapes.push_back(std::move(output_shape));
+    }
+  }
+
+  return std::make_pair(std::move(input_shapes), std::move(output_shapes));
+}
+
+FailureOr<std::string> ExtractName(mlir::Operation* op) {
+  if (auto func_op = op->getParentOfType<mlir::func::FuncOp>()) {
+    return func_op.getName().str();
+  }
+  return std::string("generated_linalg_function");
+}
+
+LogicalResult ValidateReduction(const LinalgGeneric& linalg,
+                                mlir::Operation* op) {
+  bool foundSupportedReduction = false;
+  for (const auto& region_op : linalg.region.ops) {
+    switch (region_op.kind) {
+      case OpKind::kAddF:
+      case OpKind::kSubF:
+        foundSupportedReduction = true;
+        break;
+      case OpKind::kMulF:
+      case OpKind::kDivF:
+      case OpKind::kMaxF:
+      case OpKind::kMinF:
+        return op->emitError("LinalgReductionToXlsPattern: initialization of ")
+               << (region_op.kind == OpKind::kMulF   ? "multiplication"
+                   : region_op.kind == OpKind::kDivF ? "division"
+                   : region_op.kind == OpKind::kMaxF ? "maximum"
+                                                     : "minimum")
+               << " reduction operation is not supported";
+      default:
+        // Other operations like constants are fine
+        break;
+    }
+  }
+  if (!foundSupportedReduction) {
+    return op->emitError(
+        "LinalgReductionToXlsPattern: no supported reduction operation found "
+        "(only add and sub are supported)");
+  }
+  return success();
 }
 
 }  // namespace mlir::xls
