@@ -352,16 +352,14 @@ struct LinalgReductionToXlsPattern
     }
     std::string dslx_code = *dslx_code_result;
 
-    // Step 6: Write DSLX code to file (optional, for debugging)
-    // TODO: Make this configurable or remove in production
-    std::ofstream dslx_file("/home/the1/Gits/xls-eco/xls/contrib/mlir/testdata/tmp/generated_dslx.x");
-    if (dslx_file.is_open()) {
-      dslx_file << dslx_code;
-      dslx_file.close();
-      llvm::errs() << "DSLX code written to /home/the1/Gits/xls-eco/xls/contrib/mlir/testdata/tmp/generated_dslx.x\n";
-    } else {
-      llvm::errs() << "Failed to open /home/the1/Gits/xls-eco/xls/contrib/mlir/testdata/tmp/generated_dslx.x for writing\n";
-    }
+    // Step 6: Output generated DSLX code to terminal and exit early (WIP)
+    llvm::errs() << "=== GENERATED DSLX CODE ===\n";
+    llvm::errs() << dslx_code;
+    llvm::errs() << "=== END GENERATED DSLX CODE ===\n";
+    llvm::errs() << "Early exit due to WIP - DSLX code generation complete\n";
+    
+    // Exit immediately to prevent MLIR framework from printing the module
+    std::exit(0);
 
     // Step 7: Replace the linalg.generic operation with a placeholder
     // For now, we replace with a zero tensor since we only generate function

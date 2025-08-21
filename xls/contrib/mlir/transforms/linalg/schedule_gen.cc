@@ -48,10 +48,11 @@ static int CountParallel(const LinalgGeneric& g) {
 }
 
 // Helper to separate parallel and reduction dimensions (avoid duplication)
-static std::pair<std::vector<int>, std::vector<int>> SeparateParallelAndReductionDims(const LinalgGeneric& g) {
+static std::pair<std::vector<int>, std::vector<int>>
+SeparateParallelAndReductionDims(const LinalgGeneric& g) {
   std::vector<int> parallel_dims, reduction_dims;
   const int D = g.dims.size();
-  
+
   for (int i = 0; i < D; ++i) {
     if (g.dims[i].kind == IterKind::kParallel) {
       parallel_dims.push_back(i);
@@ -59,7 +60,7 @@ static std::pair<std::vector<int>, std::vector<int>> SeparateParallelAndReductio
       reduction_dims.push_back(i);
     }
   }
-  
+
   return {std::move(parallel_dims), std::move(reduction_dims)};
 }
 
@@ -205,42 +206,42 @@ LoopBand BuildLoopBand(const LinalgGeneric& g, const BroadcastAnalysis& A,
   return band;
 }
 
-
-
 // Main schedule generation function
 FailureOr<Schedule> GenerateSchedule(const LinalgEvalResults& eval_results) {
   const LinalgCodegenConfig& config = GetLinalgCodegenConfig();
   const auto& g = eval_results.linalg;
   const auto& A = eval_results.broadcast;
 
-    // Apply loop ordering policy
+  // Apply loop ordering policy
   auto order = ApplyLoopOrderingPolicy(g, A, config.loop_order());
-  
+
   // Build loop band
   auto band = BuildLoopBand(g, A, order, config);
-  
+
   // Create and return schedule
   Schedule schedule;
   schedule.bands.push_back(std::move(band));
-  
+
   // Pre-compute parallel and reduction dimensions
   schedule.ComputeParallelAndReductionDims();
-  
-  // Reverse parallel dimensions to match DSLX axis order (outer→inner = DSLX first→last axis)
-  // This ensures loop variables align with DSLX array axes for correct update operations
+
+  // Reverse parallel dimensions to match DSLX axis order (outer→inner = DSLX
+  // first→last axis) This ensures loop variables align with DSLX array axes for
+  // correct update operations
   auto& [P, R] = schedule.parallel_and_reduction_dims;
   std::reverse(P.begin(), P.end());
-  
+
   // Calculate row length for reversed parallel dimensions (only if needed)
   if (CountParallel(g) >= 2 && !P.empty()) {
-    schedule.row_len = GetDimensionExtent(A, P.back());  // Last parallel dim after reversal
+    schedule.row_len =
+        GetDimensionExtent(A, P.back());  // Last parallel dim after reversal
   } else {
     schedule.row_len = 0;
   }
-  
+
   // NEW: Build dimension mapping system
   schedule.BuildDimensionMapping();
-  
+
   return schedule;
 }
 
@@ -251,37 +252,31 @@ void Schedule::BuildDimensionMapping() {
   loop_var_to_mlir_dim.clear();
   mlir_dim_to_dslx_dim.clear();
   dslx_dim_to_mlir_dim.clear();
-  
-  const auto& [P, R] = parallel_and_reduction_dims;
-  
 
-  
+  const auto& [P, R] = parallel_and_reduction_dims;
+
   // Build loop variable mappings for parallel dimensions
   for (size_t i = 0; i < P.size(); ++i) {
     int logical_dim = P[i];
     std::string loop_var = "p" + std::to_string(i);
-    
+
     mlir_dim_to_loop_var[logical_dim] = loop_var;
     loop_var_to_mlir_dim[loop_var] = logical_dim;
-    
-
   }
-  
+
   // Build loop variable mappings for reduction dimensions
   for (size_t i = 0; i < R.size(); ++i) {
     int logical_dim = R[i];
     std::string loop_var = "r" + std::to_string(i);
-    
+
     mlir_dim_to_loop_var[logical_dim] = loop_var;
     loop_var_to_mlir_dim[loop_var] = logical_dim;
-    
-
   }
-  
+
   // Build DSLX dimension mappings (accounting for XLS array representation)
   // XLS arrays are reversed: array[cols][rows] instead of array[rows][cols]
   // So we need to map MLIR dimensions to DSLX axis positions
-  
+
   // Map parallel dimensions (outer to inner in MLIR = first to last in DSLX)
   for (size_t i = 0; i < P.size(); ++i) {
     int logical_dim = P[i];
@@ -289,7 +284,7 @@ void Schedule::BuildDimensionMapping() {
     mlir_dim_to_dslx_dim[logical_dim] = dslx_pos;
     dslx_dim_to_mlir_dim[dslx_pos] = logical_dim;
   }
-  
+
   // Map reduction dimensions (after parallel dimensions in DSLX)
   for (size_t i = 0; i < R.size(); ++i) {
     int logical_dim = R[i];
