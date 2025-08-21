@@ -370,10 +370,7 @@ FailureOr<LinalgEvalResults> EvalLinalgGeneric(mlir::Operation* op) {
   linalg.operands = std::move(*operands);
   linalg.region = std::move(*region);
 
-  // Validate the linalg structure
-  if (failed(Validate(linalg, op))) {
-    return failure();
-  }
+
 
   auto broadcast_result = EvalBroadcast(linalg, op);
   if (failed(broadcast_result)) {
@@ -405,60 +402,7 @@ FailureOr<LinalgEvalResults> EvalLinalgGeneric(mlir::Operation* op) {
                            std::move(broadcast), std::move(*shapes_result)};
 }
 
-LogicalResult Validate(const LinalgGeneric& g, mlir::Operation* op) {
-  if (g.dims.empty()) {
-    return op->emitError("LinalgGeneric has no dimensions. Structure:\n")
-           << LinalgGenericToString(g);
-  }
 
-  for (size_t i = 0; i < g.dims.size(); ++i) {
-    const auto& d = g.dims[i];
-    if (d.extent < 1) {
-      return op->emitError("Dimension ")
-             << i << " has invalid extent " << d.extent
-             << " (must be >= 1). Structure:\n"
-             << LinalgGenericToString(g);
-    }
-  }
-
-  for (size_t i = 0; i < g.operands.size(); ++i) {
-    const auto& opnd = g.operands[i];
-    if (opnd.map.results.size() != opnd.type.shape.size()) {
-      return op->emitError("Operand ")
-             << i << " has mismatched affine map results ("
-             << opnd.map.results.size() << ") and tensor shape ("
-             << opnd.type.shape.size() << "). Structure:\n"
-             << LinalgGenericToString(g);
-    }
-
-    for (size_t j = 0; j < opnd.map.results.size(); ++j) {
-      const auto& e = opnd.map.results[j];
-      if (e.kind == AffineExpr::kVar) {
-        if (e.var < 0 || e.var >= static_cast<int>(g.dims.size())) {
-          return op->emitError("Operand ")
-                 << i << " affine expression " << j
-                 << " references invalid dimension " << e.var
-                 << " (valid range: 0-" << (g.dims.size() - 1)
-                 << "). Structure:\n"
-                 << LinalgGenericToString(g);
-        }
-      }
-    }
-  }
-
-  if (!IsDag(g.region.ops).succeeded()) {
-    return op->emitError(
-               "Region operations do not form a valid DAG. Structure:\n")
-           << LinalgGenericToString(g);
-  }
-
-  if (!AllYieldsDefined(g.region).succeeded()) {
-    return op->emitError("Region has undefined yield values. Structure:\n")
-           << LinalgGenericToString(g);
-  }
-
-  return success();
-}
 
 FailureOr<std::vector<std::vector<bool>>> EvalOperandRefs(
     const LinalgGeneric& g, mlir::Operation* op) {
