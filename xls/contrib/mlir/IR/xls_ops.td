@@ -101,7 +101,6 @@ defvar Xls_BitsOrTuple = AnyTypeOf<[Xls_Bits, NestedTupleOf<[Xls_Bits]>]>;
 defvar Xls_BitsOrTupleOrToken = AnyTypeOf<[
   Xls_Bits, NestedTupleOf<[Xls_Bits]>, Xls_TokenType]>;
 
-// Float tensor types for neural network support
 defvar Xls_FloatTensors = StaticShapeTensorOf<[F32, BF16, F64]>;
 defvar Xls_BitsAndFloats = AnyTypeOf<[Xls_Bits, Xls_FloatTensors]>;
 
