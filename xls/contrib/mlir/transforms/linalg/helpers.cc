@@ -24,28 +24,7 @@
 
 namespace mlir::xls {
 
-std::array<int, 4> MakeOperandIndex(int operand_id, const std::array<int, 4>& loop_iter,
-                                   const BroadcastAnalysis& A) {
-  std::array<int, 4> idx = {0, 0, 0, 0};
-  const auto& indexer = A.indexers[operand_id];
-  
-  for (size_t axis = 0; axis < indexer.results.size() && axis < 4; ++axis) {
-    if (std::holds_alternative<int>(indexer.results[axis])) {
-      int dim_id = std::get<int>(indexer.results[axis]);
-      if (dim_id >= 0 && dim_id < 4) {
-        idx[axis] = loop_iter[dim_id];
-      }
-    }
-  }
-  return idx;
-}
 
-float Load(int operand_id, const std::array<int, 4>& idx) {
-  // Placeholder implementation for loading values from tensors.
-  // In a real implementation, this would access the actual tensor data.
-  // For testing purposes, returns a deterministic value based on operand and indices.
-  return static_cast<float>(operand_id + idx[0] + idx[1] + idx[2] + idx[3]);
-}
 
 std::string LinalgGenericToString(const LinalgGeneric& linalg) {
   std::ostringstream oss;

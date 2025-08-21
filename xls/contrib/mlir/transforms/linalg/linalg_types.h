@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_TYPES_LINALG_TYPES_H_
-#define XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_TYPES_LINALG_TYPES_H_
+#ifndef XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_LINALG_TYPES_H_
+#define XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_LINALG_TYPES_H_
 
 #include <array>
 #include <map>
@@ -57,16 +57,28 @@ struct Operand {
 };
 
 enum class OpKind {
-  kAddF, kMulF, kSubF, kDivF,
-  kCmpOGT, kCmpOLT, kCmpOEQ, kCmpOGE, kCmpOLE, kCmpONE,
-  kSelect, kYield, kConstF32, kMaxF, kMinF
+  kAddF,
+  kMulF,
+  kSubF,
+  kDivF,
+  kCmpOGT,
+  kCmpOLT,
+  kCmpOEQ,
+  kCmpOGE,
+  kCmpOLE,
+  kCmpONE,
+  kSelect,
+  kYield,
+  kConstF32,
+  kMaxF,
+  kMinF
 };
 
 struct ValueId {
   int id;
-  ValueId(int i = -1) : id(i) {}
-  bool operator==(const ValueId& other) const { return id == other.id; }
-  bool operator<(const ValueId& other) const { return id < other.id; }
+  ValueId(int i = -1);
+  bool operator==(const ValueId& other) const;
+  bool operator<(const ValueId& other) const;
 };
 
 // Hash function for ValueId
@@ -100,14 +112,14 @@ struct SizeExpr {
   int64_t constant_value;
   std::string symbolic_name;
 
-  SizeExpr() : kind(kConstant), constant_value(1), symbolic_name("") {}
-  SizeExpr(int64_t value) : kind(kConstant), constant_value(value), symbolic_name("") {}
-  SizeExpr(std::string name) : kind(kSymbolic), constant_value(0), symbolic_name(std::move(name)) {}
+  SizeExpr();
+  SizeExpr(int64_t value);
+  SizeExpr(std::string name);
 
-  bool isConstant() const { return kind == kConstant; }
-  bool isSymbolic() const { return kind == kSymbolic; }
-  int64_t getConstant() const { return constant_value; }
-  const std::string& getSymbolic() const { return symbolic_name; }
+  bool isConstant() const;
+  bool isSymbolic() const;
+  int64_t getConstant() const;
+  const std::string& getSymbolic() const;
 };
 
 struct DimAnalysis {
@@ -125,202 +137,43 @@ struct BroadcastAnalysis {
   std::vector<OperandIndexFn> indexers;
 };
 
-// Comprehensive evaluation result that includes reduction detection and broadcast evaluation
-struct LinalgEvalResults {
-  LinalgGeneric linalg;
-  BroadcastAnalysis broadcast;
-  bool has_reduction;
-  bool is_valid_reduction;
-  
-  // Default constructor
-  LinalgEvalResults() : has_reduction(false), is_valid_reduction(false) {}
-  
-  // Constructor with all parameters
-  LinalgEvalResults(const LinalgGeneric& l, const BroadcastAnalysis& b, bool has_red, bool is_valid)
-      : linalg(l), broadcast(b), has_reduction(has_red), is_valid_reduction(is_valid) {}
+struct InputShapeInfo {
+  std::vector<SizeExpr> in_shape;
+  std::vector<SizeExpr> dslx_shape;  // Reversed for DSLX syntax
 };
 
 struct OutputShapeInfo {
   std::vector<SizeExpr> out_shape;
 };
 
-// Code generation configuration
-struct TileSpec {
-  std::map<int /*dim id*/, int /*tile size*/> size;
+// Comprehensive evaluation result that includes reduction detection and
+// broadcast evaluation
+struct LinalgEvalResults {
+  std::string function_name;  // High-level identifier
+  LinalgGeneric linalg;       // Core operation structure
+  BroadcastAnalysis broadcast; // Broadcast analysis results
+  std::pair<std::vector<InputShapeInfo>, std::vector<OutputShapeInfo>>
+      shapes;  // Derived shapes for all operands (inputs and outputs)
+
+  // Default constructor
+  LinalgEvalResults()
+      : function_name("generated_linalg_function") {}
+
+  // Constructor with all parameters
+  LinalgEvalResults(const std::string& name, const LinalgGeneric& l, const BroadcastAnalysis& b,
+                    std::pair<std::vector<InputShapeInfo>, std::vector<OutputShapeInfo>> shapes)
+      : function_name(name),
+        linalg(l),
+        broadcast(b),
+        shapes(std::move(shapes)) {}
 };
 
-class LinalgCodegenConfig {
- public:
-  enum class LoopOrder { kPreserve, kParallelOuter_ReductionInner, kHeuristicCacheFriendly };
-  enum class ReducePolicy { kSerial, kTree, kKahan };
-  
-  // Builder pattern methods
-  LinalgCodegenConfig& loop_order(LoopOrder value) {
-    loop_order_ = value;
-    return *this;
-  }
-  
-  LinalgCodegenConfig& reduce_policy(ReducePolicy value) {
-    reduce_policy_ = value;
-    return *this;
-  }
-  
-  LinalgCodegenConfig& unroll_factor(int dim, int factor) {
-    unroll_factors_[dim] = factor;
-    return *this;
-  }
-  
-  LinalgCodegenConfig& tile_size(int dim, int size) {
-    tile_sizes_[dim] = size;
-    return *this;
-  }
-  
-  LinalgCodegenConfig& hoist_invariants(bool value) {
-    hoist_invariants_ = value;
-    return *this;
-  }
-  
-  LinalgCodegenConfig& enable_tiling(bool value) {
-    enable_tiling_ = value;
-    return *this;
-  }
-  
-  // Getters
-  LoopOrder loop_order() const { return loop_order_; }
-  ReducePolicy reduce_policy() const { return reduce_policy_; }
-  bool enable_tiling() const { return enable_tiling_; }
-  
-  int unroll_factor(int dim) const {
-    auto it = unroll_factors_.find(dim);
-    return it != unroll_factors_.end() ? it->second : 1;
-  }
-  
-  int tile_size(int dim) const {
-    auto it = tile_sizes_.find(dim);
-    return it != tile_sizes_.end() ? it->second : 1;
-  }
-  
-  bool hoist_invariants() const { return hoist_invariants_; }
-  
-  // Access to internal maps for compatibility
-  const std::map<int, int>& unroll() const { return unroll_factors_; }
-  const std::map<int, int>& tiles() const { return tile_sizes_; }
-  
-  // Legacy compatibility - create TileSpec from internal state
-  TileSpec get_tiles() const {
-    TileSpec tiles;
-    tiles.size = tile_sizes_;
-    return tiles;
-  }
-  
- private:
-  LoopOrder loop_order_ = LoopOrder::kPreserve;
-  ReducePolicy reduce_policy_ = ReducePolicy::kSerial;
-  std::map<int, int> unroll_factors_;
-  std::map<int, int> tile_sizes_;
-  bool hoist_invariants_ = true;
-  bool enable_tiling_ = false;  // Default to no tiling for safety
-};
+// Forward declarations for schedule types
+struct Schedule;
+class LinalgCodegenConfig;
 
-// Legacy compatibility alias
-using CodegenConfig = LinalgCodegenConfig;
 
-// Loop scheduling structures
-struct LoopBand {
-  struct Loop {
-    int dim;            // which logical dim (0..D-1)
-    int64_t begin;      // 0
-    int64_t end;        // loop extent or tile end
-    int64_t step;       // usually 1; may equal tile size for outers
-    bool is_tile_outer; // true if this is the tile loop
-    bool is_reduction;  // from dims[dim].kind
-    int unroll = 1;     // static unroll factor to apply at emission
-  };
-  std::vector<Loop> loops;
-};
-
-struct Schedule {
-  std::vector<LoopBand> bands;
-};
-
-// Region-body lowering structures
-struct Scalar {
-  enum { kF32, kTupleF32 /*for Kahan: (acc,c)*/ } tag;
-  float f;                // if kF32
-  std::pair<float, float> kahan; // if kTupleF32
-};
-
-using ValMap = absl::flat_hash_map<ValueId, Scalar>; // SSA id -> scalar
-
-// Intermediate form for region-body lowering
-struct LoopIndex {
-  int dim;  // dimension index
-  int64_t begin;
-  int64_t end;
-  int64_t step;
-  bool is_tile_outer;
-  int unroll;
-};
-
-struct ReducedExpr {
-  std::string expr_string;  // placeholder for actual AST or code emitter callback
-};
-
-struct LaneBundle {
-  int lanes;                   // U
-  std::vector<ReducedExpr> exprs;  // size U, same DAG param'd by lane index
-};
-
-struct Accumulator {
-  LinalgCodegenConfig::ReducePolicy pol;
-  int lanes;                   // U
-  LaneBundle bundle;           // per-iteration lanes
-};
-
-struct LoweredKernel {
-  std::vector<LoopIndex> red_loops;  // innermost structure, possibly tiled
-  std::vector<Accumulator> accs;     // usually size 1
-};
-
-// Reduction structures
-using ReducePolicy = CodegenConfig::ReducePolicy;
-
-struct ReduceCtx {
-  ReducePolicy policy;
-  int tree_fan_in = 2;          // binary tree by default
-  bool deterministic = true;    // keep fixed grouping
-};
-
-struct AccState {
-  float acc = 0.0f;
-  float c = 0.0f;               // compensation term for Kahan
-};
-
-// Unroll planning structures
-struct LanePlan {
-  int dim;            // which loop dim is unrolled
-  int lanes;          // U
-  bool has_tail;      // (extent % U) != 0
-  int main_iters;     // extent / U
-  int tail;           // extent % U
-};
-
-struct MultiLanePlan {
-  std::vector<LanePlan> dims;  // e.g., {j:6, l:4} -> 24 total lanes
-  int total_lanes;             // product of all lane counts (Uj * Ul * ...)
-  
-  // Compute lane_id from individual dimension offsets
-  int ComputeLaneId(const std::vector<int>& lane_offsets) const;
-  
-  // Compute individual dimension offsets from lane_id
-  std::vector<int> ComputeLaneOffsets(int lane_id) const;
-};
-
-struct UnrollPlan {
-  std::vector<LanePlan> dims;  // e.g., { LanePlan{dim=j, lanes=6, ...}, LanePlan{dim=l, lanes=4, ...} }
-  MultiLanePlan multi_lane;    // For handling multiple unrolled dimensions together
-};
 
 }  // namespace mlir::xls
 
-#endif  // XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_TYPES_LINALG_TYPES_H_
+#endif  // XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_LINALG_TYPES_H_

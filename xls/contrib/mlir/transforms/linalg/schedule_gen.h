@@ -12,18 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_EVAL_SCHEDULE_EVAL_H_
-#define XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_EVAL_SCHEDULE_EVAL_H_
+#ifndef XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_SCHEDULE_GEN_H_
+#define XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_SCHEDULE_GEN_H_
 
 #include "mlir/Support/LogicalResult.h"
 #include "xls/contrib/mlir/transforms/linalg/linalg_types.h"
+#include "xls/contrib/mlir/transforms/linalg/schedule_types.h"
 
 namespace mlir::xls {
 
 // Generates scheduling information for linalg.generic operations.
 // Requires validated LinalgEvalResults to ensure proper evaluation has occurred.
+// The returned Schedule includes row_len field with the extent of the last parallel dimension.
 FailureOr<Schedule> GenerateSchedule(const LinalgEvalResults& eval_results);
 
 }  // namespace mlir::xls
 
-#endif  // XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_EVAL_SCHEDULE_EVAL_H_
+#endif  // XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_SCHEDULE_GEN_H_

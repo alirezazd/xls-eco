@@ -16,31 +16,26 @@
 
 namespace mlir::xls {
 
-int MultiLanePlan::ComputeLaneId(const std::vector<int>& lane_offsets) const {
-  int lane_id = 0;
-  int stride = 1;
-  
-  for (int i = dims.size() - 1; i >= 0 && i < lane_offsets.size(); --i) {
-    lane_id += lane_offsets[i] * stride;
-    stride *= dims[i].lanes;
-  }
-  
-  return lane_id;
-}
+ValueId::ValueId(int i) : id(i) {}
 
-std::vector<int> MultiLanePlan::ComputeLaneOffsets(int lane_id) const {
-  std::vector<int> offsets;
-  offsets.reserve(dims.size());
-  
-  int remaining = lane_id;
-  
-  for (int i = dims.size() - 1; i >= 0; --i) {
-    int lanes = dims[i].lanes;
-    offsets.insert(offsets.begin(), remaining % lanes);
-    remaining /= lanes;
-  }
-  
-  return offsets;
-}
+bool ValueId::operator==(const ValueId& other) const { return id == other.id; }
+
+bool ValueId::operator<(const ValueId& other) const { return id < other.id; }
+
+SizeExpr::SizeExpr() : kind(kConstant), constant_value(1), symbolic_name("") {}
+
+SizeExpr::SizeExpr(int64_t value)
+    : kind(kConstant), constant_value(value), symbolic_name("") {}
+
+SizeExpr::SizeExpr(std::string name)
+    : kind(kSymbolic), constant_value(0), symbolic_name(std::move(name)) {}
+
+bool SizeExpr::isConstant() const { return kind == kConstant; }
+
+bool SizeExpr::isSymbolic() const { return kind == kSymbolic; }
+
+int64_t SizeExpr::getConstant() const { return constant_value; }
+
+const std::string& SizeExpr::getSymbolic() const { return symbolic_name; }
 
 }  // namespace mlir::xls

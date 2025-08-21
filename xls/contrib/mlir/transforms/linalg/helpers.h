@@ -26,11 +26,6 @@
 
 namespace mlir::xls {
 
-// Operand indexing and loading functions
-std::array<int, 4> MakeOperandIndex(int operand_id, const std::array<int, 4>& loop_iter,
-                                   const BroadcastAnalysis& A);
-float Load(int operand_id, const std::array<int, 4>& idx);
-
 // Debug and utility functions
 std::string LinalgGenericToString(const LinalgGeneric& linalg);
 

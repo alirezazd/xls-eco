@@ -17,15 +17,29 @@ package(default_visibility = ["//visibility:public"])
 # Core types library
 cc_library(
     name = "linalg_types",
-    hdrs = [
-        "linalg_types.h",
-        "linalg_config.h",
-    ],
+    hdrs = ["linalg_types.h"],
     srcs = ["linalg_types.cc"],
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/hash:hash",
     ],
+)
+
+# Schedule types library
+cc_library(
+    name = "schedule_types",
+    hdrs = ["schedule_types.h"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+# Configuration management library
+cc_library(
+    name = "linalg_config",
+    hdrs = ["linalg_config.h"],
+    srcs = ["linalg_config.cc"],
+    deps = [":schedule_types"],
 )
 
 # Utility functions library
@@ -41,17 +55,6 @@ cc_library(
     ],
 )
 
-# Enhanced reduction utilities library
-cc_library(
-    name = "linalg_reduction_utils",
-    hdrs = ["reduction_utils.h"],
-    srcs = ["reduction_utils.cc"],
-    deps = [
-        ":linalg_types",
-        "@com_google_absl//absl/types:span",
-    ],
-)
-
 # Evaluation libraries
 cc_library(
     name = "linalg_schedule_gen",
@@ -59,23 +62,13 @@ cc_library(
     srcs = ["schedule_gen.cc"],
     deps = [
         ":linalg_types",
+        ":schedule_types",
+        ":linalg_config",
         ":linalg_utils",
         ":linalg_eval",
         "@llvm-project//mlir:Support",
     ],
 )
-
-cc_library(
-    name = "linalg_unroll_plan_gen",
-    hdrs = ["unroll_plan_gen.h"],
-    srcs = ["unroll_plan_gen.cc"],
-    deps = [
-        ":linalg_types",
-        ":linalg_utils",
-        "@llvm-project//mlir:Support",
-    ],
-)
-
 cc_library(
     name = "linalg_eval",
     hdrs = ["linalg_eval.h"],
@@ -83,67 +76,50 @@ cc_library(
     deps = [
         ":linalg_types",
         ":linalg_utils",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:LinalgDialect",
         "@llvm-project//mlir:Support",
     ],
 )
 
-# Codegen libraries
 cc_library(
-    name = "linalg_lane_ops",
-    hdrs = ["lane_ops.h"],
-    srcs = ["lane_ops.cc"],
-    deps = [
-        ":linalg_types",
-        ":linalg_eval",
-        ":linalg_utils",
-        ":linalg_reduction_utils",
-        "@llvm-project//mlir:Support",
-    ],
-)
-
-cc_library(
-    name = "linalg_dslx_codegen",
-    hdrs = ["dslx_codegen.h"],
-    srcs = ["dslx_codegen.cc"],
+    name = "linalg_dslxgen",
+    hdrs = ["dslxgen.h", "dslx_types.h"],
+    srcs = ["dslxgen.cc"],
     deps = [
         ":linalg_types",
         ":linalg_eval",
         ":linalg_schedule_gen",
-        ":linalg_unroll_plan_gen",
-        ":linalg_reduction_utils",
         "@com_google_absl//absl/strings",
     ],
 )
 
-cc_library(
-    name = "linalg_reduction",
-    hdrs = ["reduction.h"],
-    srcs = ["reduction.cc"],
-    deps = [
-        ":linalg_types",
-        ":linalg_eval",
-        ":linalg_schedule_gen",
-        ":linalg_utils",
-        ":linalg_reduction_utils",
-        ":linalg_lane_ops",
-        "@llvm-project//mlir:Support",
-    ],
-)
+# Reduction library - REMOVED (using XLS built-in reduction support)
+# cc_library(
+#     name = "linalg_reduction",
+#     hdrs = ["reduction.h"],
+#     srcs = ["reduction.cc"],
+#     deps = [
+#         ":linalg_types",
+#         ":linalg_eval",
+#         ":linalg_schedule_gen",
+#         ":linalg_utils",
+#         ":linalg_reduction_utils",
+#         ":linalg_lane_ops",
+#         "@llvm-project//mlir:Support",
+#     ],
+# )
 
 # Main library that includes everything
 cc_library(
     name = "linalg_all",
     deps = [
         ":linalg_types",
+        ":linalg_config",
         ":linalg_utils",
-        ":linalg_reduction_utils",
         ":linalg_eval",
         ":linalg_schedule_gen",
-        ":linalg_unroll_plan_gen",
-        ":linalg_lane_ops",
-        ":linalg_dslx_codegen",
-        ":linalg_reduction",
+        ":linalg_dslxgen",
     ],
 )
 

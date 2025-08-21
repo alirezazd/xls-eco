@@ -15,60 +15,17 @@
 #ifndef XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_LINALG_CONFIG_H_
 #define XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_LINALG_CONFIG_H_
 
-#include "xls/contrib/mlir/transforms/linalg/linalg_types.h"
+#include "xls/contrib/mlir/transforms/linalg/schedule_types.h"
+
 
 namespace mlir::xls {
 
-// Manager for LinalgCodegenConfig singleton instance.
-class LinalgCodegenConfigManager {
- public:
-  // Returns the singleton manager instance.
-  static LinalgCodegenConfigManager& GetLinalgCodegenConfigManagerSingleton() {
-    static LinalgCodegenConfigManager instance;
-    return instance;
-  }
-
-  // Get the current configuration.
-  LinalgCodegenConfig& GetConfig() { return config_; }
-  const LinalgCodegenConfig& GetConfig() const { return config_; }
-  
-  // Set the configuration.
-  void SetConfig(const LinalgCodegenConfig& config) { config_ = config; }
-
- private:
-  LinalgCodegenConfig config_;
-  LinalgCodegenConfigManager() = default;
-};
-
 // Convenience functions for accessing the global configuration.
-inline LinalgCodegenConfig& GetLinalgCodegenConfig() {
-  return LinalgCodegenConfigManager::GetLinalgCodegenConfigManagerSingleton().GetConfig();
-}
+LinalgCodegenConfig& GetLinalgCodegenConfig();
+void SetLinalgCodegenConfig(const LinalgCodegenConfig& config);
 
-inline void SetLinalgCodegenConfig(const LinalgCodegenConfig& config) {
-  LinalgCodegenConfigManager::GetLinalgCodegenConfigManagerSingleton().SetConfig(config);
-}
-
-// Convenience functions for setting individual config options
-inline void SetLinalgCodegenConfig(
-    LinalgCodegenConfig::LoopOrder loop_order,
-    LinalgCodegenConfig::ReducePolicy reduce_policy,
-    bool hoist_invariants = false,
-    bool enable_tiling = false) {
-  LinalgCodegenConfig config;
-  config.loop_order(loop_order);
-  config.reduce_policy(reduce_policy);
-  config.hoist_invariants(hoist_invariants);
-  config.enable_tiling(enable_tiling);
-  SetLinalgCodegenConfig(config);
-}
-
-// Overload for setting just loop order and reduce policy
-inline void SetLinalgCodegenConfig(
-    LinalgCodegenConfig::LoopOrder loop_order,
-    LinalgCodegenConfig::ReducePolicy reduce_policy) {
-  SetLinalgCodegenConfig(loop_order, reduce_policy, false, false);
-}
+// Convenience function for setting loop order
+void SetLinalgCodegenConfig(LinalgCodegenConfig::LoopOrder loop_order);
 
 }  // namespace mlir::xls
 
