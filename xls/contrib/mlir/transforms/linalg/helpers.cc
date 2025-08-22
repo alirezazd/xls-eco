@@ -19,7 +19,7 @@
 #include <sstream>
 #include <string>
 
-#include "mlir/Support/LogicalResult.h"
+#include "mlir/include/mlir/Support/LogicalResult.h"
 #include "xls/contrib/mlir/transforms/linalg/linalg_types.h"
 
 namespace mlir::xls {

@@ -25,8 +25,8 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "linalg_types.h"
-#include "mlir/Support/LLVM.h"
-#include "mlir/Support/LogicalResult.h"
+#include "mlir/include/mlir/Support/LLVM.h"
+#include "mlir/include/mlir/Support/LogicalResult.h"
 
 // IWYU pragma: begin_exports
 #include "xls/contrib/mlir/transforms/linalg/linalg_types.h"

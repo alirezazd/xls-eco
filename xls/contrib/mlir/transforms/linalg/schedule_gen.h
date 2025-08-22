@@ -15,7 +15,7 @@
 #ifndef XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_SCHEDULE_GEN_H_
 #define XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_SCHEDULE_GEN_H_
 
-#include "mlir/Support/LogicalResult.h"
+#include "mlir/include/mlir/Support/LogicalResult.h"
 #include "xls/contrib/mlir/transforms/linalg/linalg_types.h"
 #include "xls/contrib/mlir/transforms/linalg/schedule_types.h"
 

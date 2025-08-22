@@ -21,8 +21,8 @@
 #include <variant>
 #include <vector>
 
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Support/LogicalResult.h"
+#include "mlir/include/mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/include/mlir/Support/LogicalResult.h"
 #include "xls/contrib/mlir/transforms/linalg/linalg_types.h"
 
 namespace mlir {

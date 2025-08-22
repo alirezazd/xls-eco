@@ -20,14 +20,14 @@
 #include <sstream>
 #include <string>
 
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/PatternMatch.h"
-#include "mlir/Pass/Pass.h"
-#include "mlir/Transforms/DialectConversion.h"
+#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/include/mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/include/mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/include/mlir/IR/BuiltinTypes.h"
+#include "mlir/include/mlir/IR/PatternMatch.h"
+#include "mlir/include/mlir/Pass/Pass.h"
+#include "mlir/include/mlir/Transforms/DialectConversion.h"
 #include "xls/contrib/mlir/IR/xls_ops.h"
 #include "xls/contrib/mlir/transforms/linalg/dslxgen.h"
 #include "xls/contrib/mlir/transforms/linalg/linalg_config.h"
