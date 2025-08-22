@@ -304,7 +304,7 @@ FailureOr<std::vector<Operand>> BuildOperands(
   std::vector<Operand> operands;
 
   for (size_t i = 0; i < inputs.size(); ++i) {
-    auto operand = EvalOperand(inputs[i], "input" + std::to_string(i), false,
+    auto operand = EvalOperand(inputs[i], "arg" + std::to_string(i), false,
                                indexing_maps[i]);
     if (failed(operand)) {
       return failure();
