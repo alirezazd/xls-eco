@@ -55,6 +55,9 @@ DeriveShapes(const LinalgGeneric& linalg, const BroadcastAnalysis& broadcast, ml
 // Helper function to validate reduction operations
 LogicalResult ValidateReduction(const LinalgGeneric& linalg, mlir::Operation* op);
 
+// Helper function to extract actual reduction operation
+FailureOr<OpKind> ExtractActualReductionOp(const LinalgGeneric& linalg);
+
 }  // namespace mlir::xls
 
 #endif  // XLS_CONTRIB_MLIR_TRANSFORMS_LINALG_LINALG_EVAL_H_

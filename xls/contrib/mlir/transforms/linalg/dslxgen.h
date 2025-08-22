@@ -24,10 +24,12 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "linalg_types.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 
 // IWYU pragma: begin_exports
+#include "xls/contrib/mlir/transforms/linalg/linalg_types.h"
 #include "xls/contrib/mlir/transforms/linalg/schedule_types.h"
 // IWYU pragma: end_exports
 
@@ -67,8 +69,8 @@ class DslxGen {
   std::string OutT_;
 
   // Core emission methods
-  LogicalResult InitStream();
-  LogicalResult EmitHeader();
+  LogicalResult InitStream();   
+  LogicalResult EmitHeader(OpKind reduction_op);
   LogicalResult EmitInits(const LinalgEvalResults& eval_results,
                           const Schedule& schedule);
   LogicalResult EmitSignature(const LinalgEvalResults& eval_results);
@@ -80,7 +82,7 @@ class DslxGen {
   LogicalResult EmitFeatureFlag();
   LogicalResult EmitImports();
   LogicalResult EmitF32TypeAliases();
-  LogicalResult EmitConstants();
+  LogicalResult EmitConstants(OpKind reduction_op = OpKind::kYield);
 
   // Helper methods for signature emission
   LogicalResult EmitFunctionName(const std::string& function_name);
@@ -101,6 +103,8 @@ class DslxGen {
       const InputShapeInfo& input_shape);
   FailureOr<std::string> BuildDslxTypeFromSizeExprs(
       const std::vector<SizeExpr>& dimensions);
+  FailureOr<std::string> BuildTypedNestedPattern(
+      const std::vector<std::string>& dims, const std::string& scalar_value, const std::string& macro_name);
   FailureOr<std::string> BuildTypedNestedZeroPattern(
       const std::vector<std::string>& dims);
 

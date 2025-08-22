@@ -154,18 +154,21 @@ struct LinalgEvalResults {
   BroadcastAnalysis broadcast; // Broadcast analysis results
   std::pair<std::vector<InputShapeInfo>, std::vector<OutputShapeInfo>>
       shapes;  // Derived shapes for all operands (inputs and outputs)
+  OpKind reduction_op;  // Actual reduction operation detected
 
   // Default constructor
   LinalgEvalResults()
-      : function_name("generated_linalg_function") {}
+      : function_name("generated_linalg_function"), reduction_op(OpKind::kYield) {}
 
   // Constructor with all parameters
   LinalgEvalResults(const std::string& name, const LinalgGeneric& l, const BroadcastAnalysis& b,
-                    std::pair<std::vector<InputShapeInfo>, std::vector<OutputShapeInfo>> shapes)
+                    std::pair<std::vector<InputShapeInfo>, std::vector<OutputShapeInfo>> shapes,
+                    OpKind reduction_op)
       : function_name(name),
         linalg(l),
         broadcast(b),
-        shapes(std::move(shapes)) {}
+        shapes(std::move(shapes)),
+        reduction_op(reduction_op) {}
 };
 
 // Forward declarations for schedule types

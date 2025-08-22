@@ -24,6 +24,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "linalg_types.h"
 #include "xls/contrib/mlir/transforms/linalg/dslx_types.h"
 #include "xls/contrib/mlir/transforms/linalg/linalg_config.h"
 #include "xls/contrib/mlir/transforms/linalg/linalg_eval.h"
@@ -35,7 +36,7 @@ DslxGen::DslxGen() : OutT_() {}
 
 FailureOr<std::string> DslxGen::GenerateDslxCode(
     const LinalgEvalResults& eval_results, const Schedule& schedule) {
-  if (failed(InitStream()) || failed(EmitHeader()) ||
+  if (failed(InitStream()) || failed(EmitHeader(eval_results.reduction_op)) ||
       failed(EmitInits(eval_results, schedule)) ||
       failed(EmitSignature(eval_results)) ||
       failed(EmitLoopBody(eval_results, schedule))) {
@@ -51,10 +52,10 @@ LogicalResult DslxGen::InitStream() {
   return success();
 }
 
-LogicalResult DslxGen::EmitHeader() {
+LogicalResult DslxGen::EmitHeader(OpKind reduction_op) {
   if (failed(EmitFileHeader()) || failed(EmitFeatureFlag()) ||
       failed(EmitImports()) || failed(EmitF32TypeAliases()) ||
-      failed(EmitConstants())) {
+      failed(EmitConstants(reduction_op))) {
     return failure();
   }
   return success();
@@ -81,8 +82,20 @@ LogicalResult DslxGen::EmitF32TypeAliases() {
   return success();
 }
 
-LogicalResult DslxGen::EmitConstants() {
-  dslx_stream_ << "const F32_ZERO = float32::zero(false);\n";
+LogicalResult DslxGen::EmitConstants(OpKind reduction_op) {
+  switch (reduction_op) {
+    case OpKind::kAddF:
+    case OpKind::kSubF:
+      dslx_stream_ << "const F32_ZERO = float32::zero(false);\n";
+      break;
+    case OpKind::kMulF:
+      dslx_stream_ << "const F32_ONE = float32::one(false);\n";
+      break;
+    default:
+      dslx_stream_ << "const F32_ZERO = float32::zero(false);\n";
+      dslx_stream_ << "const F32_ONE = float32::one(false);\n";
+      break;
+  }
   return success();
 }
 
@@ -216,17 +229,22 @@ FailureOr<std::string> DslxGen::BuildParameterTypeFromDerived(
   return BuildDslxTypeFromSizeExprs(input_shape.dslx_shape);
 }
 
-FailureOr<std::string> DslxGen::BuildTypedNestedZeroPattern(
-    const std::vector<std::string>& dims) {
-  if (dims.empty()) return std::string("F32_ZERO");
+FailureOr<std::string> DslxGen::BuildTypedNestedPattern(
+    const std::vector<std::string>& dims, const std::string& scalar_value, const std::string& macro_name) {
+  if (dims.empty()) return scalar_value;
 
-  std::string result = "zero!<F32";
+  std::string result = macro_name + "!<F32";
   for (const auto& dim : dims) {
     result += "[" + dim + "]";
   }
   result += ">()";
 
   return result;
+}
+
+FailureOr<std::string> DslxGen::BuildTypedNestedZeroPattern(
+    const std::vector<std::string>& dims) {
+  return BuildTypedNestedPattern(dims, "F32_ZERO", "zero");
 }
 
 int64_t DslxGen::GetLoopBoundFromSchedule(const Schedule& schedule,
@@ -528,16 +546,24 @@ FailureOr<Accumulator> DslxGen::MakeParallelAcc(int p_pos, int mP,
 
 FailureOr<Accumulator> DslxGen::MakeReductionAcc(
     int r_pos, int mR, const LinalgEvalResults& eval_results) {
-  for (const auto& op : eval_results.linalg.region.ops) {
-    switch (op.kind) {
-      case OpKind::kAddF:
-      case OpKind::kSubF:
-        return Accumulator("red" + std::to_string(r_pos), "F32", "F32_ZERO");
-      default:
-        break;
-    }
+  // Use the actual reduction operation from evaluation results
+  std::string name = "red" + std::to_string(r_pos);
+  std::string type = "F32";  // Reduction accumulators are always scalar
+  std::string init;
+  
+  switch (eval_results.reduction_op) {
+    case OpKind::kAddF:
+    case OpKind::kSubF:
+      init = "F32_ZERO";
+      break;
+    case OpKind::kMulF:
+      init = "F32_ONE";
+      break;
+    default:
+      return failure();
   }
-  return failure();
+  
+  return Accumulator(std::move(name), std::move(type), std::move(init));
 }
 
 // Build tensor indexing using dimension mapping
@@ -684,6 +710,18 @@ DslxGen::BuildRegionExpression(const Region& region,
         expr = ss.str();
         break;
       }
+      case OpKind::kCmpOGT:
+        if (op.inputs.size() >= 2) {
+          expr = "float32::gt_2(" + value_map[op.inputs[0]] + ", " +
+                 value_map[op.inputs[1]] + ")";
+        }
+        break;
+      case OpKind::kSelect:
+        if (op.inputs.size() >= 3) {
+          expr = "if (" + value_map[op.inputs[0]] + ") { (" +
+                 value_map[op.inputs[1]] + ") } else { (" + value_map[op.inputs[2]] + ") }";
+        }
+        break;
       default:
         return failure();
     }

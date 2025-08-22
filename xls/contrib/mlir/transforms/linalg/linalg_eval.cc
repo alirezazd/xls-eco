@@ -398,8 +398,16 @@ FailureOr<LinalgEvalResults> EvalLinalgGeneric(mlir::Operation* op) {
     return failure();
   }
   std::string function_name = std::move(*function_name_result);
+  
+  auto reduction_op_result = ExtractActualReductionOp(linalg);
+  if (failed(reduction_op_result)) {
+    return failure();
+  }
+  OpKind reduction_op = *reduction_op_result;
+  
   return LinalgEvalResults{function_name, std::move(linalg),
-                           std::move(broadcast), std::move(*shapes_result)};
+                           std::move(broadcast), std::move(*shapes_result),
+                           reduction_op};
 }
 
 
@@ -814,6 +822,32 @@ FailureOr<std::string> ExtractName(mlir::Operation* op) {
   return std::string("generated_linalg_function");
 }
 
+FailureOr<OpKind> ExtractActualReductionOp(const LinalgGeneric& linalg) {
+  // Find accumulator (output operand)
+  ValueId accumulator_id = ValueId(-1);
+  for (size_t i = 0; i < linalg.operands.size(); ++i) {
+    if (linalg.operands[i].is_output) {
+      accumulator_id = linalg.region.args[i];
+      break;
+    }
+  }
+  
+  if (accumulator_id.id == -1) {
+    return failure();
+  }
+  
+  // Find first operation that uses accumulator
+  for (const auto& region_op : linalg.region.ops) {
+    for (const auto& input : region_op.inputs) {
+      if (input == accumulator_id) {
+        return region_op.kind;
+      }
+    }
+  }
+  
+  return failure();
+}
+
 LogicalResult ValidateReduction(const LinalgGeneric& linalg,
                                 mlir::Operation* op) {
   bool foundSupportedReduction = false;
@@ -821,27 +855,24 @@ LogicalResult ValidateReduction(const LinalgGeneric& linalg,
     switch (region_op.kind) {
       case OpKind::kAddF:
       case OpKind::kSubF:
+      case OpKind::kMulF:
         foundSupportedReduction = true;
         break;
-      case OpKind::kMulF:
-      case OpKind::kDivF:
-      case OpKind::kMaxF:
-      case OpKind::kMinF:
-        return op->emitError("LinalgReductionToXlsPattern: initialization of ")
-               << (region_op.kind == OpKind::kMulF   ? "multiplication"
-                   : region_op.kind == OpKind::kDivF ? "division"
-                   : region_op.kind == OpKind::kMaxF ? "maximum"
-                                                     : "minimum")
-               << " reduction operation is not supported";
-      default:
-        // Other operations like constants are fine
+      case OpKind::kCmpOGT:
+      case OpKind::kSelect:
+        // Allow comparison and select operations as intermediate operations
         break;
+      default:
+        // Reject any unsupported operations
+        return op->emitError("LinalgReductionToXlsPattern: unsupported operation in reduction region. Structure:\n")
+               << LinalgGenericToString(linalg);
     }
   }
   if (!foundSupportedReduction) {
     return op->emitError(
         "LinalgReductionToXlsPattern: no supported reduction operation found "
-        "(only add and sub are supported)");
+        "(only add, sub, and mul are supported). Structure:\n")
+        << LinalgGenericToString(linalg);
   }
   return success();
 }

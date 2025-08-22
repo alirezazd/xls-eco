@@ -283,44 +283,46 @@ struct LinalgReductionToXlsPattern
       return failure(); // Not a reduction, let other patterns handle it
     }
 
-    // Step 1: Check that all output operands are zero-initialized splat tensors
+    // Step 1: Check that all output operands are valid (either tensor.splat or function parameters)
     auto outputs = op.getOutputs();
     for (auto output : outputs) {
+      // Accept tensor.splat operations (existing support)
       auto splatOp = output.getDefiningOp<tensor::SplatOp>();
-      if (!splatOp) {
-        op.emitError(
-            "LinalgReductionToXlsPattern: output operand must be a tensor.splat operation");
-        return failure();
+      if (splatOp) {
+        auto constOp = splatOp.getInput().getDefiningOp<arith::ConstantOp>();
+        if (!constOp) {
+          op.emitError(
+              "LinalgReductionToXlsPattern: splat input must be an arith.constant operation");
+          return failure();
+        }
+        
+        // Check that the constant is numeric (int or float)
+        auto constValue = constOp.getValue();
+        if (!llvm::isa<mlir::FloatAttr>(constValue) && !llvm::isa<mlir::IntegerAttr>(constValue)) {
+          op.emitError(
+              "LinalgReductionToXlsPattern: constant must be a numeric value (int or float)");
+          return failure();
+        }
+        
+        // Temporarily restrict to zero initialization only
+        bool isZero = false;
+        if (auto floatAttr = llvm::dyn_cast<mlir::FloatAttr>(constValue)) {
+          isZero = floatAttr.getValueAsDouble() == 0.0;
+        } else if (auto intAttr = llvm::dyn_cast<mlir::IntegerAttr>(constValue)) {
+          isZero = intAttr.getValue().isZero();
+        }
+        
+        if (!isZero) {
+          op.emitError(
+              "LinalgReductionToXlsPattern: currently only zero initialization is supported");
+          return failure();
+        }
+        continue; // Valid tensor.splat, check next output
       }
       
-      auto constOp = splatOp.getInput().getDefiningOp<arith::ConstantOp>();
-      if (!constOp) {
-        op.emitError(
-            "LinalgReductionToXlsPattern: splat input must be an arith.constant operation");
-        return failure();
-      }
-      
-      // Check that the constant is numeric (int or float)
-      auto constValue = constOp.getValue();
-      if (!llvm::isa<mlir::FloatAttr>(constValue) && !llvm::isa<mlir::IntegerAttr>(constValue)) {
-        op.emitError(
-            "LinalgReductionToXlsPattern: constant must be a numeric value (int or float)");
-        return failure();
-      }
-      
-      // Temporarily restrict to zero initialization only
-      bool isZero = false;
-      if (auto floatAttr = llvm::dyn_cast<mlir::FloatAttr>(constValue)) {
-        isZero = floatAttr.getValueAsDouble() == 0.0;
-      } else if (auto intAttr = llvm::dyn_cast<mlir::IntegerAttr>(constValue)) {
-        isZero = intAttr.getValue().isZero();
-      }
-      
-      if (!isZero) {
-        op.emitError(
-            "LinalgReductionToXlsPattern: currently only zero initialization is supported");
-        return failure();
-      }
+      // Accept any other tensor value (including function parameters) - minimal support
+      // For now, we assume any non-splat tensor is acceptable
+      continue;
     }
 
     // Step 1: Evaluate the linalg.generic operation
