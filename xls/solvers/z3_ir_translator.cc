@@ -727,6 +727,15 @@ absl::Status IrTranslator::HandleAfterAll(AfterAll* after_all) {
   return seh.status();
 }
 
+absl::Status IrTranslator::HandleTrace(Trace* trace) {
+  ScopedErrorHandler seh(ctx_);
+  // A trace is a simulation-only debug print: it produces a token and never
+  // influences any computed value.
+  NoteTranslation(
+      trace, CreateTuple(TypeToSort(ctx_, *trace->GetType()), /*elements=*/{}));
+  return seh.status();
+}
+
 absl::Status IrTranslator::HandleMinDelay(MinDelay* min_delay) {
   ScopedErrorHandler seh(ctx_);
   // Token types don't contain any data. A 0-field tuple is a convenient
