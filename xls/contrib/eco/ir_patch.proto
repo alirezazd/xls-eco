@@ -28,9 +28,22 @@ message ArgumentProto {
     string message = 12;
     string label = 13;
     string format = 14;
+    bool non_synthesizable = 16;
     int64 verbosity = 15;
   }
 }
+// TODO(xls-eco): Multi-proc ECO also needs the queue-owning channel objects
+// (supported_ops, initial_values, fifo_config) modeled alongside interfaces.
+message ChannelProto {
+  string name = 1;
+  xls.TypeProto data_type = 2;
+  string kind = 3;
+  string direction = 4;
+  string flow_control = 5;
+  string strictness = 6;
+  string flop_kind = 7;
+}
+
 message NodeProto {
   optional uint32 id = 1;
   string op = 2;
@@ -38,12 +51,14 @@ message NodeProto {
   xls.TypeProto data_type = 4;
   repeated xls.TypeProto operand_data_types = 5;
   repeated ArgumentProto unique_args = 6;
+  optional ChannelProto channel = 7;
 }
 
 message EdgeProto {
   string from_node = 1;
   string to_node = 2;
   uint32 index = 3;
+  bool channel_binding = 4;
 }
 
 message NodeEditPathProto {

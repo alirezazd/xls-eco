@@ -12,13 +12,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("//xls/contrib/eco:eco_build_defs.bzl", "xls_dslx_ir_diff", "xls_patch_ir")
 
 package(default_visibility = ["//xls:xls_internal"])
 
-# TODO(xls-eco): Expand the benchmark suite — complete FIR/ZSTD hybrid coverage
-# and add larger industrial-scale IRs (5k-50k nodes) to characterize the hybrid
-# pipeline's scalability ceiling.
+# TODO(xls-eco): Expand the benchmark suite - add larger industrial-scale
+# IRs (5k-50k nodes) to characterize the hybrid pipeline's scalability ceiling.
+
+xls_dslx_ir_diff(
+    name = "aes_ctr_diff",
+    srcs = [
+        ":aes_ctr.org.x",
+        ":aes_ctr.rev.x",
+    ],
+    dslx_top = "aes_ctr",
+    deps = [
+        "//xls/modules/aes:aes_common_dslx",
+        "//xls/modules/aes:aes_dslx",
+    ],
+)
+
+xls_dslx_ir_diff(
+    name = "apfloat_fmac_rev_0_diff",
+    srcs = [
+        ":apfloat_fmac.org.x",
+        ":apfloat_fmac.rev_0.x",
+    ],
+    dslx_top = "fmac",
+)
+
+xls_dslx_ir_diff(
+    name = "apfloat_fmac_rev_1_diff",
+    srcs = [
+        ":apfloat_fmac.org.x",
+        ":apfloat_fmac.rev_1.x",
+    ],
+    dslx_top = "fmac",
+)
 
 xls_dslx_ir_diff(
     name = "crc32_diff",
@@ -30,25 +61,79 @@ xls_dslx_ir_diff(
 )
 
 xls_dslx_ir_diff(
-    name = "apfloat_diff0",
+    name = "fir_filter_fixed32_diff",
     srcs = [
-        ":apfloat_fmac.org.x",
-        ":apfloat_fmac.rev0.x",
+        ":fir_filter_fixed32.org.x",
+        ":fir_filter_fixed32.rev.x",
     ],
-    dslx_top = "fmac",
+    dslx_top = "main",
+    mcs = True,
 )
 
 xls_dslx_ir_diff(
-    name = "apfloat_diff1",
+    name = "fir_filter_fp32_diff",
     srcs = [
-        ":apfloat_fmac.org.x",
-        ":apfloat_fmac.rev1.x",
+        ":fir_filter_fp32.org.x",
+        ":fir_filter_fp32.rev.x",
     ],
-    dslx_top = "fmac",
+    dslx_top = "main",
+    mcs = True,
+    mcs_optimal = False,  #Plateaus after finding 3699 mappings and is probably the optimal mapping but due to large difference  between input node counts the recursion is taking a long time to find the optimal mapping, so we set it to false for now to get the results faster.
 )
 
 xls_dslx_ir_diff(
-    name = "riscv_diff",
+    name = "fir_filter_fp32_proc_diff",
+    srcs = [
+        ":fir_filter_fp32_proc.org.x",
+        ":fir_filter_fp32_proc.rev.x",
+    ],
+    dslx_top = "fir_filter_proc",
+    mcs = True,
+    mcs_optimal = False,
+)
+
+xls_dslx_ir_diff(
+    name = "ghash_diff",
+    srcs = [
+        ":ghash.org.x",
+        ":ghash.rev.x",
+    ],
+    dslx_top = "ghash",
+    deps = ["//xls/modules/aes:aes_common_dslx"],
+)
+
+xls_dslx_ir_diff(
+    name = "histogram_rev_0_diff",
+    srcs = [
+        ":histogram.org.x",
+        ":histogram.rev_0.x",
+    ],
+    dslx_top = "histogram",
+    mcs = True,
+)
+
+xls_dslx_ir_diff(
+    name = "histogram_rev_1_diff",
+    srcs = [
+        ":histogram.org.x",
+        ":histogram.rev_1.x",
+    ],
+    dslx_top = "histogram",
+    mcs = True,
+)
+
+xls_dslx_ir_diff(
+    name = "ram_demux_diff",
+    srcs = [
+        ":ram_demux.org.x",
+        ":ram_demux.rev.x",
+    ],
+    dslx_top = "ram_demux",
+    deps = ["//xls/examples:ram_dslx"],
+)
+
+xls_dslx_ir_diff(
+    name = "riscv_simple_diff",
     srcs = [
         ":riscv_simple.org.x",
         ":riscv_simple.rev.x",
@@ -58,13 +143,12 @@ xls_dslx_ir_diff(
 )
 
 xls_dslx_ir_diff(
-    name = "histogram_diff",
+    name = "rle_enc_diff",
     srcs = [
-        ":histogram.org.x",
-        ":histogram.rev.x",
+        ":rle_enc.org.x",
+        ":rle_enc.rev.x",
     ],
-    dslx_top = "histogram",
-    mcs = True,
+    dslx_top = "rle_enc",
 )
 
 xls_dslx_ir_diff(
@@ -77,25 +161,22 @@ xls_dslx_ir_diff(
     mcs = True,
 )
 
-xls_dslx_ir_diff(
-    name = "fir_filter_fp_diff",
-    srcs = [
-        ":fir_filter_fp32.org.x",
-        ":fir_filter_fp32.rev.x",
-    ],
-    dslx_top = "main",
-    mcs = True,
-    mcs_optimal = False,  #Plateaus after finding 3699 mappings and is probably the optimal mapping but due to large difference  between input node counts the recursion is taking a long time to find the optimal mapping, so we set it to false for now to get the results faster.
-    tags = ["manual"],
+xls_patch_ir(
+    name = "aes_ctr_patched_opt_ir",
+    activation_count = 1,
+    ir_diff = ":aes_ctr_diff",
 )
 
-xls_dslx_ir_diff(
-    name = "fir_filter_fixed32_diff",
-    srcs = [
-        ":fir_filter_fixed32.org.x",
-        ":fir_filter_fixed32.rev.x",
-    ],
-    dslx_top = "main",
+xls_patch_ir(
+    name = "apfloat_fmac_rev_0_patched_opt_ir",
+    activation_count = 1,
+    ir_diff = ":apfloat_fmac_rev_0_diff",
+)
+
+xls_patch_ir(
+    name = "apfloat_fmac_rev_1_patched_opt_ir",
+    activation_count = 1,
+    ir_diff = ":apfloat_fmac_rev_1_diff",
 )
 
 xls_patch_ir(
@@ -103,27 +184,57 @@ xls_patch_ir(
     ir_diff = ":crc32_diff",
 )
 
-# This will fail due to not supporting changes in channel types yet, needs manual fixup.
-# 1. replace the header channel defs  in the patched ir with the after ir ones.
-# 2. replace top receive nodes with the after ir ones while keeping their ids
-# 3. run lec manually and it should pass.
-# 4. TODO(xls-eco): Treat channels as nodes and automatically re-generate channels if needed.
-#
-# xls_patch_ir(
-#     name = "apfloat_patched_opt_ir",
-#     activation_count = 1,
-#     ir_diff = ":apfloat_diff_rev1",
-# )
-
 xls_patch_ir(
-    name = "riscv_patched_opt_ir",
-    ir_diff = ":riscv_diff",
+    name = "fir_filter_fixed32_patched_opt_ir",
+    ir_diff = ":fir_filter_fixed32_diff",
 )
 
 xls_patch_ir(
-    name = "histogram_patched_opt_ir",
+    name = "fir_filter_fp32_patched_opt_ir",
+    # LEC on ~5k-nodes & ~9k-edges is too expensive.
+    eqv_method = "structural",
+    ir_diff = ":fir_filter_fp32_diff",
+)
+
+xls_patch_ir(
+    name = "fir_filter_fp32_proc_patched_opt_ir",
+    eqv_method = "structural",
+    ir_diff = ":fir_filter_fp32_proc_diff",
+)
+
+xls_patch_ir(
+    name = "ghash_patched_opt_ir",
     activation_count = 1,
-    ir_diff = ":histogram_diff",
+    ir_diff = ":ghash_diff",
+)
+
+xls_patch_ir(
+    name = "histogram_rev_0_patched_opt_ir",
+    activation_count = 1,
+    ir_diff = ":histogram_rev_0_diff",
+)
+
+xls_patch_ir(
+    name = "histogram_rev_1_patched_opt_ir",
+    activation_count = 1,
+    ir_diff = ":histogram_rev_1_diff",
+)
+
+xls_patch_ir(
+    name = "ram_demux_patched_opt_ir",
+    activation_count = 1,
+    ir_diff = ":ram_demux_diff",
+)
+
+xls_patch_ir(
+    name = "riscv_simple_patched_opt_ir",
+    ir_diff = ":riscv_simple_diff",
+)
+
+xls_patch_ir(
+    name = "rle_enc_patched_opt_ir",
+    activation_count = 1,
+    ir_diff = ":rle_enc_diff",
 )
 
 xls_patch_ir(
@@ -131,23 +242,11 @@ xls_patch_ir(
     ir_diff = ":vector_core_diff",
 )
 
-xls_patch_ir(
-    name = "fir_filter_patched_opt_ir",
-    ir_diff = ":fir_filter_fp_diff",
-    tags = ["manual"],
-)
-
-xls_dslx_ir_diff(
-    name = "fir_filter_fixed_diff",
-    srcs = [
-        ":fir_filter_fixed32.org.x",
-        ":fir_filter_fixed32.rev.x",
+build_test(
+    name = "benchmark_build_test",
+    targets = [
+        ":" + name
+        for name in existing_rules()
+        if name.endswith("_patched_opt_ir")
     ],
-    dslx_top = "main",
-    mcs = True,
-)
-
-xls_patch_ir(
-    name = "fir_filter_fixed_patched_opt_ir",
-    ir_diff = ":fir_filter_fixed_diff",
 )

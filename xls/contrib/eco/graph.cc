@@ -20,6 +20,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
@@ -90,12 +91,57 @@ std::string OptionalProtoDebugString(
 
 }  // namespace
 
+std::size_t ChannelInfo::Hash() const {
+  std::size_t seed = 0;
+  seed = HashCombine(seed, HashString(name));
+  seed = HashCombine(seed, HashOptionalProto(data_type));
+  seed = HashCombine(seed, HashString(kind));
+  seed = HashCombine(seed, HashString(direction));
+  seed = HashCombine(seed, HashString(flow_control));
+  seed = HashCombine(seed, HashString(strictness));
+  seed = HashCombine(seed, HashString(flop_kind));
+  return seed;
+}
+
+std::string ChannelInfo::DebugString() const {
+  std::vector<std::string> fields{
+      absl::StrCat("name=", name),
+      absl::StrCat("kind=", kind),
+  };
+  if (data_type.has_value()) {
+    fields.push_back(absl::StrCat("data_type=", data_type->ShortDebugString()));
+  }
+  if (!direction.empty()) {
+    fields.push_back(absl::StrCat("direction=", direction));
+  }
+  if (!flow_control.empty()) {
+    fields.push_back(absl::StrCat("flow_control=", flow_control));
+  }
+  if (!strictness.empty()) {
+    fields.push_back(absl::StrCat("strictness=", strictness));
+  }
+  if (!flop_kind.empty()) {
+    fields.push_back(absl::StrCat("flop_kind=", flop_kind));
+  }
+  return absl::StrJoin(fields, ", ");
+}
+
 std::size_t NodeCostAttributes::Hash() const {
   std::size_t seed = 0;
   seed = HashCombine(seed, HashOptionalOp(op));
   seed = HashCombine(seed, HashOptionalProto(data_type));
+  // Operand types fold order-insensitively for commutative ops so an operand
+  // swap does not change the label;
+  std::vector<std::size_t> operand_type_hashes;
+  operand_type_hashes.reserve(operand_data_types.size());
   for (const xls::TypeProto& operand_type : operand_data_types) {
-    seed = HashCombine(seed, HashProto(operand_type));
+    operand_type_hashes.push_back(HashProto(operand_type));
+  }
+  if (op.has_value() && xls::OpIsCommutative(*op)) {
+    absl::c_sort(operand_type_hashes);
+  }
+  for (std::size_t operand_type_hash : operand_type_hashes) {
+    seed = HashCombine(seed, operand_type_hash);
   }
   seed = HashCombine(seed, HashProto(node_attributes));
   seed = HashCombine(seed, HashOptionalProto(literal_value));
@@ -103,7 +149,12 @@ std::size_t NodeCostAttributes::Hash() const {
   seed = HashCombine(seed, HashOptionalValue(state_element));
   seed = HashCombine(seed, HashOptionalProto(state_initial_value));
   seed = HashCombine(seed, HashOptionalValue(state_index));
+  seed = HashCombine(seed, HashOptionalValue(param_index));
   seed = HashCombine(seed, HashOptionalValue(trace_xls_format));
+  // Folded only when present so non-channel node labels are unchanged.
+  if (channel.has_value()) {
+    seed = HashCombine(seed, channel->Hash());
+  }
   return seed;
 }
 
@@ -143,8 +194,14 @@ std::string NodeCostAttributes::DebugString() const {
   if (state_index.has_value()) {
     fields.push_back(absl::StrCat("state_index=", *state_index));
   }
+  if (param_index.has_value()) {
+    fields.push_back(absl::StrCat("param_index=", *param_index));
+  }
   if (trace_xls_format.has_value()) {
     fields.push_back(absl::StrCat("trace_xls_format=", *trace_xls_format));
+  }
+  if (channel.has_value()) {
+    fields.push_back(absl::StrCat("channel={", channel->DebugString(), "}"));
   }
   return absl::StrJoin(fields, ", ");
 }
@@ -156,6 +213,10 @@ std::size_t EdgeCostAttributes::Hash() const {
   seed = HashCombine(seed, HashOptionalOp(sink_op));
   seed = HashCombine(seed, HashOptionalProto(sink_data_type));
   seed = HashCombine(seed, HashOptionalValue(index));
+  // Folded only when set so ordinary operand-edge labels are unchanged.
+  if (channel_binding) {
+    seed = HashCombine(seed, std::size_t{0x6368616e6e656c01});
+  }
   return seed;
 }
 
@@ -169,6 +230,9 @@ std::string EdgeCostAttributes::DebugString() const {
   };
   if (index.has_value()) {
     fields.push_back(absl::StrCat("index=", *index));
+  }
+  if (channel_binding) {
+    fields.push_back("channel_binding=true");
   }
   return absl::StrJoin(fields, ", ");
 }
@@ -378,10 +442,6 @@ void XLSGraph::populate_node_signatures() {
       }
       return a.neighbor_index < b.neighbor_index;
     });
-    // TODO(xls-eco): For commutative ops such as add/and/or/xor, consider
-    // canonicalizing equivalent operand permutations here before hashing.
-    // Today the signature remains operand-order-sensitive on incoming edges,
-    // which makes the MCS compatibility key stricter than semantic equality.
     std::vector<std::size_t> labels;
     labels.reserve(ordered.size());
     for (const NeighborInfo& info : ordered) {
@@ -427,6 +487,84 @@ void XLSGraph::populate_node_signatures() {
               << " attrs=" << nodes[i].cost_attributes.DebugString();
     }
   }
+}
+
+std::vector<std::size_t> XLSGraph::StructuralHash() const {
+  // Merkle hash of the dataflow DAG, operands before users: each node's hash
+  // folds its own label with hash(edge label, operand hash) per operand, so
+  // it fingerprints the node's whole input cone. Operand contributions are
+  // sorted before folding; operand order still matters for non-commutative
+  // ops only, because their edge labels carry the operand index (commutative
+  // ops drop it -- see xls_ir_to_graph.cc).
+  const int n = static_cast<int>(nodes.size());
+  std::vector<std::size_t> node_hash(n, 0);
+
+  // Kahn topological order over operand edges (operand -> user): operands
+  // first.
+  std::vector<int> indegree(n, 0);
+  for (const XLSEdge& e : edges) {
+    if (e.endpoints.second >= 0 && e.endpoints.second < n) {
+      ++indegree[e.endpoints.second];
+    }
+  }
+  std::vector<int> order;
+  order.reserve(n);
+  for (int i = 0; i < n; ++i) {
+    if (indegree[i] == 0) order.push_back(i);
+  }
+  for (std::size_t head = 0; head < order.size(); ++head) {
+    const int u = order[head];
+    auto it = node_edges.find(u);
+    if (it == node_edges.end()) continue;
+    for (int edge_idx : it->second) {
+      const XLSEdge& e = edges[edge_idx];
+      if (e.endpoints.first != u) continue;  // outgoing (user) edges only
+      const int w = e.endpoints.second;
+      if (--indegree[w] == 0) order.push_back(w);
+    }
+  }
+  // Defensive: if the graph is not a DAG, fold any leftover nodes in index
+  // order so the hash stays defined (only the safe, false-mismatch direction is
+  // at risk, never a false match).
+  if (static_cast<int>(order.size()) != n) {
+    std::vector<bool> ordered(n, false);
+    for (int u : order) ordered[u] = true;
+    for (int i = 0; i < n; ++i) {
+      if (!ordered[i]) order.push_back(i);
+    }
+  }
+
+  for (int u : order) {
+    std::vector<std::size_t> operand_contrib;
+    auto it = node_edges.find(u);
+    if (it != node_edges.end()) {
+      for (int edge_idx : it->second) {
+        const XLSEdge& e = edges[edge_idx];
+        if (e.endpoints.second != u) continue;  // incoming (operand) edges only
+        operand_contrib.push_back(
+            HashCombine(e.label, node_hash[e.endpoints.first]));
+      }
+    }
+    absl::c_sort(operand_contrib);
+    std::size_t h = nodes[u].label;
+    for (std::size_t contrib : operand_contrib) {
+      h = HashCombine(h, contrib);
+    }
+    node_hash[u] = h;
+  }
+
+  // Fold the sorted multiset of per-node hashes plus the node/edge counts
+  // into the whole-graph fingerprint, appended as the last element.
+  std::vector<std::size_t> sorted_hashes = node_hash;
+  absl::c_sort(sorted_hashes);
+  std::size_t graph_hash = 0;
+  graph_hash = HashCombine(graph_hash, nodes.size());
+  graph_hash = HashCombine(graph_hash, edges.size());
+  for (std::size_t h : sorted_hashes) {
+    graph_hash = HashCombine(graph_hash, h);
+  }
+  node_hash.push_back(graph_hash);
+  return node_hash;
 }
 
 void XLSGraph::PinNodes(const std::vector<int>& node_indices) {
@@ -497,7 +635,7 @@ void XLSGraph::Cut(const std::vector<int>& node_indices) {
   RefreshAdjacency();
   RefreshEdgeCounts();
   RefreshReturnAndIndex();
-  ValidateEdges();
+  RemoveDanglingEdges();
 
   VLOG(1) << "Cut complete: " << nodes.size() << " nodes and " << edges.size()
           << " edges remaining.";
@@ -561,7 +699,7 @@ void XLSGraph::RefreshReturnAndIndex() {
     }
   }
 }
-void XLSGraph::ValidateEdges() {
+void XLSGraph::RemoveDanglingEdges() {
   int before = (int)edges.size();
 
   edges.erase(std::remove_if(edges.begin(), edges.end(),
@@ -576,7 +714,7 @@ void XLSGraph::ValidateEdges() {
 
   int removed = before - (int)edges.size();
   if (removed > 0)
-    VLOG(1) << "ValidateEdges: removed " << removed << " invalid edges.";
+    VLOG(1) << "RemoveDanglingEdges: removed " << removed << " invalid edges.";
 
   RefreshAdjacency();
   RefreshEdgeCounts();

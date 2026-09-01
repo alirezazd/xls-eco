@@ -33,11 +33,9 @@ def _dslx_ir_diff_impl(ctx):
     after_ir = ctx.attr.after[IrFileInfo].ir_file
 
     patch_out = ctx.actions.declare_file(ctx.label.name + ".patch.bin")
-    report_out = ctx.actions.declare_file(ctx.label.name + ".report.txt")
+    report_out = ctx.actions.declare_file(ctx.label.name + ".report")
 
     ged_args = []
-    if ctx.attr.timeout >= 0:
-        ged_args.append("--timeout=" + str(ctx.attr.timeout))
     if ctx.attr.mcs == False:
         ged_args.append("--use_mcs=false")
     if ctx.attr.mcs_cutoff >= 0:
@@ -105,10 +103,6 @@ xls_dslx_ir_diff_rule = rule(
             default = True,
             doc = "Enable MCS when diffing; false passes --use_mcs=false to GED.",
         ),
-        "timeout": attr.int(
-            default = -1,
-            doc = "Optional GED timeout in seconds; negative means omit flag.",
-        ),
         "mcs_cutoff": attr.int(
             default = -1,
             doc = "Stop MCS when remaining nodes <= this value; negative means run to completion.",
@@ -124,14 +118,14 @@ xls_dslx_ir_diff_rule = rule(
     },
 )
 
-def xls_dslx_ir_diff(name, srcs, dslx_top, timeout = None, mcs = None, mcs_cutoff = None, mcs_optimal = None, mcs_timeout = None, tags = None):
+def xls_dslx_ir_diff(name, srcs, dslx_top, deps = None, mcs = None, mcs_cutoff = None, mcs_optimal = None, mcs_timeout = None, tags = None):
     """Builds opt IRs for two DSLX sources and emits a patch between them.
 
     Args:
       name: Base name for generated targets/outputs.
       srcs: List of two DSLX source labels [before, after].
       dslx_top: Either a single top name (applied to both) or a list of two.
-      timeout: Optional GED timeout (seconds). None or negative => omit flag.
+      deps: Optional list of xls_dslx_library deps for imports in the sources.
       mcs: Optional boolean. If false, pass --use_mcs=false to GED; true leaves default.
       mcs_cutoff: Optional int. Stop MCS when remaining nodes <= this value; negative => run to completion.
       mcs_optimal: Optional boolean. False enables heuristic MCS early stop.
@@ -150,11 +144,16 @@ def xls_dslx_ir_diff(name, srcs, dslx_top, timeout = None, mcs = None, mcs_cutof
     before_ir_target = name + "_before_opt_ir"
     after_ir_target = name + "_after_opt_ir"
 
+    opt_ir_kwargs = {}
+    if deps != None:
+        opt_ir_kwargs["deps"] = deps
+
     xls_dslx_opt_ir(
         name = before_ir_target,
         srcs = [srcs[0]],
         dslx_top = tops[0],
         tags = tags,
+        **opt_ir_kwargs
     )
 
     xls_dslx_opt_ir(
@@ -162,6 +161,7 @@ def xls_dslx_ir_diff(name, srcs, dslx_top, timeout = None, mcs = None, mcs_cutof
         srcs = [srcs[1]],
         dslx_top = tops[1],
         tags = tags,
+        **opt_ir_kwargs
     )
 
     xls_dslx_ir_diff_rule_kwargs = dict(
@@ -169,8 +169,6 @@ def xls_dslx_ir_diff(name, srcs, dslx_top, timeout = None, mcs = None, mcs_cutof
         before = ":" + before_ir_target,
         after = ":" + after_ir_target,
     )
-    if timeout != None:
-        xls_dslx_ir_diff_rule_kwargs["timeout"] = timeout
     if mcs != None:
         xls_dslx_ir_diff_rule_kwargs["mcs"] = mcs
     if mcs_cutoff != None:
@@ -223,30 +221,42 @@ def _xls_patch_ir_impl(ctx):
         use_default_shell_env = True,
     )
 
-    check_inputs = [output_ir, after_ir]
-    check_inputs += ctx.attr.check_ir_main[DefaultInfo].default_runfiles.files.to_list()
-    check_inputs += ctx.files.check_ir_main
-    check_flags = [
+    equivalence_report = ctx.actions.declare_file(ctx.label.name + ".equiv.report")
+    common_flags = [
         "--match_exit_code=0",
         "--mismatch_exit_code=1",
+        "--equivalence_report_path=" + equivalence_report.path,
     ]
-    if ctx.attr.check_activation_count >= 0:
-        check_flags.append("--activation_count=" + str(ctx.attr.check_activation_count))
-    if ctx.attr.check_top:
-        check_flags.append("--top=" + ctx.attr.check_top)
-    if ctx.attr.check_timeout >= 0:
-        check_flags.append("--timeout=" + str(ctx.attr.check_timeout) + "s")
 
-    equivalence_report = ctx.actions.declare_file(ctx.label.name + ".equiv.report")
-    check_flags.append("--equivalence_report_path=" + equivalence_report.path)
-
-    ctx.actions.run(
-        inputs = check_inputs,
-        outputs = [equivalence_report],
-        executable = ctx.executable.check_ir_main,
-        mnemonic = "CheckIrEquivalence",
-        arguments = [output_ir.path, after_ir.path] + check_flags,
-    )
+    method = ctx.attr.eqv_method
+    if method == "logical":
+        check_inputs = [output_ir, after_ir]
+        check_inputs += ctx.attr.check_ir_main[DefaultInfo].default_runfiles.files.to_list()
+        check_inputs += ctx.files.check_ir_main
+        logical_flags = list(common_flags)
+        if ctx.attr.check_activation_count >= 0:
+            logical_flags.append("--activation_count=" + str(ctx.attr.check_activation_count))
+        if ctx.attr.check_top:
+            logical_flags.append("--top=" + ctx.attr.check_top)
+        ctx.actions.run(
+            inputs = check_inputs,
+            outputs = [equivalence_report],
+            executable = ctx.executable.check_ir_main,
+            mnemonic = "CheckIrEquivalence",
+            arguments = [output_ir.path, after_ir.path] + logical_flags,
+        )
+    else:
+        # Structural equivalence via canonical graph-hash comparison.
+        check_inputs = [output_ir, after_ir]
+        check_inputs += ctx.attr.check_struct_ir_main[DefaultInfo].default_runfiles.files.to_list()
+        check_inputs += ctx.files.check_struct_ir_main
+        ctx.actions.run(
+            inputs = check_inputs,
+            outputs = [equivalence_report],
+            executable = ctx.executable.check_struct_ir_main,
+            mnemonic = "CheckIrStructEquivalence",
+            arguments = [output_ir.path, after_ir.path] + common_flags,
+        )
 
     return [
         DefaultInfo(files = depset([output_ir, equivalence_report])),
@@ -276,6 +286,21 @@ xls_patch_ir_rule = rule(
             default = Label("//xls/dev_tools:check_ir_equivalence_main"),
             doc = "Binary used to validate equivalence of patched IR vs. revised IR.",
         ),
+        "check_struct_ir_main": attr.label(
+            executable = True,
+            cfg = "target",
+            default = Label("//xls/contrib/eco:check_ir_struct_equivalence_main"),
+            doc = "Binary used by the 'structural' method: compares canonical " +
+                  "graph fingerprints (StructuralHash) of patched vs. revised IR.",
+        ),
+        "eqv_method": attr.string(
+            default = "structural",
+            values = ["logical", "structural"],
+            doc = "Equivalence method: 'structural' (canonical graph-hash " +
+                  "comparison, default) or 'logical' (SMT/LEC via " +
+                  "check_ir_equivalence_main). check_top and " +
+                  "check_activation_count apply only to 'logical'.",
+        ),
         "check_top": attr.string(
             default = "",
             doc = "Optional top entity passed to check_ir_equivalence_main.",
@@ -283,10 +308,6 @@ xls_patch_ir_rule = rule(
         "check_activation_count": attr.int(
             default = -1,
             doc = "Optional activation count for proc equivalence; negative omits the flag.",
-        ),
-        "check_timeout": attr.int(
-            default = -1,
-            doc = "Optional timeout (seconds) for check_ir_equivalence_main; negative omits flag.",
         ),
     },
 )
@@ -297,7 +318,7 @@ def xls_patch_ir(
         schedule = None,
         top = None,
         activation_count = None,
-        timeout = None,
+        eqv_method = None,
         **kwargs):
     """Applies an ECO patch to the before IR and validates against the after IR.
 
@@ -307,26 +328,24 @@ def xls_patch_ir(
       schedule: Optional PackageScheduleProto textproto to patch alongside IR.
       top: Optional top entity passed to check_ir_equivalence_main.
       activation_count: Optional activation count for proc equivalence.
-      timeout: Optional timeout (seconds) for check_ir_equivalence_main.
+      eqv_method: Optional equivalence method: "structural" (default) or "logical".
       **kwargs: Additional parameters passed to the underlying rule.
     """
     if "check_activation_count" in kwargs and activation_count != None:
         fail("Provide only one of activation_count or check_activation_count.")
     if "check_top" in kwargs and top != None:
         fail("Provide only one of top or check_top.")
-    if "check_timeout" in kwargs and timeout != None:
-        fail("Provide only one of timeout or check_timeout.")
 
     rule_kwargs = dict(kwargs)
     rule_kwargs["ir_diff"] = ir_diff
     if schedule != None:
         rule_kwargs["schedule"] = schedule
+    if eqv_method != None:
+        rule_kwargs["eqv_method"] = eqv_method
     if activation_count != None:
         rule_kwargs["check_activation_count"] = activation_count
     if top != None:
         rule_kwargs["check_top"] = top
-    if timeout != None:
-        rule_kwargs["check_timeout"] = timeout
 
     xls_patch_ir_rule(
         name = name,

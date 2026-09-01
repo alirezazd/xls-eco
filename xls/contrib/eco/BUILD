@@ -47,6 +47,8 @@ cc_library(
         "//xls/estimators/delay_model:delay_estimator",
         "//xls/ir",
         "//xls/ir:bits",
+        "//xls/ir:channel",
+        "//xls/ir:channel_ops",
         "//xls/ir:format_strings",
         "//xls/ir:node_util",
         "//xls/ir:op",
@@ -108,6 +110,7 @@ cc_library(
     srcs = ["graph.cc"],
     hdrs = ["graph.h"],
     deps = [
+        "//xls/ir:channel_cc_proto",
         "//xls/ir:op",
         "//xls/ir:xls_type_cc_proto",
         "//xls/ir:xls_value_cc_proto",
@@ -130,11 +133,15 @@ cc_library(
         "//xls/common/status:ret_check",
         "//xls/common/status:status_macros",
         "//xls/ir",
+        "//xls/ir:channel",
+        "//xls/ir:channel_ops",
         "//xls/ir:format_strings",
         "//xls/ir:ir_parser",
         "//xls/ir:op",
+        "//xls/ir:value",
         "//xls/visualization/ir_viz:node_attribute_visitor",
         "@abseil-cpp//absl/algorithm:container",
+        "@abseil-cpp//absl/container:flat_hash_map",
         "@abseil-cpp//absl/status:statusor",
         "@abseil-cpp//absl/strings",
     ],
@@ -162,12 +169,10 @@ cc_library(
     deps = [
         ":graph",
         ":lap_solver",
-        "//xls/common:stopwatch",
         "@abseil-cpp//absl/algorithm:container",
-        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/container:flat_hash_map",
         "@abseil-cpp//absl/functional:any_invocable",
         "@abseil-cpp//absl/log",
-        "@abseil-cpp//absl/time",
     ],
 )
 
@@ -215,6 +220,59 @@ cc_test(
 )
 
 cc_library(
+    name = "struct_equivalence",
+    srcs = ["struct_equivalence.cc"],
+    hdrs = ["struct_equivalence.h"],
+    deps = [
+        ":graph",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/types:span",
+    ],
+)
+
+cc_test(
+    name = "structural_hash_test",
+    size = "small",
+    srcs = ["structural_hash_test.cc"],
+    deps = [
+        ":graph",
+        ":struct_equivalence",
+        ":xls_ir_to_graph",
+        "//xls/common:xls_gunit_main",
+        "//xls/common/status:matchers",
+        "//xls/common/status:ret_check",
+        "//xls/common/status:status_macros",
+        "//xls/ir:ir_test_base",
+        "//xls/ir",
+        "//xls/ir:ir_parser",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/types:span",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "viz_attribute_contract_test",
+    size = "small",
+    srcs = ["viz_attribute_contract_test.cc"],
+    deps = [
+        "//xls/common:proto_test_utils",
+        "//xls/common:xls_gunit_main",
+        "//xls/common/status:matchers",
+        "//xls/ir:ir_test_base",
+        "//xls/ir",
+        "//xls/ir:bits",
+        "//xls/ir:channel_ops",
+        "//xls/ir:function_builder",
+        "//xls/ir:value",
+        "//xls/visualization/ir_viz:node_attribute_visitor",
+        "//xls/visualization/ir_viz:visualization_cc_proto",
+        "@abseil-cpp//absl/strings",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_library(
     name = "ir_patch_gen_lib",
     srcs = ["ir_patch_gen.cc"],
     hdrs = ["ir_patch_gen.h"],
@@ -245,5 +303,25 @@ cc_binary(
         "@abseil-cpp//absl/status",
         "@abseil-cpp//absl/strings",
         "@abseil-cpp//absl/time",
+    ],
+)
+
+cc_binary(
+    name = "check_ir_struct_equivalence_main",
+    srcs = ["check_ir_struct_equivalence_main.cc"],
+    deps = [
+        ":graph",
+        ":struct_equivalence",
+        ":xls_ir_to_graph",
+        "//xls/common:exit_status",
+        "//xls/common:init_xls",
+        "//xls/common/file:filesystem",
+        "//xls/common/status:status_macros",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/types:span",
     ],
 )

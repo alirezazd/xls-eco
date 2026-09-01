@@ -23,12 +23,15 @@
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "xls/common/file/filesystem.h"
 #include "xls/common/status/ret_check.h"
 #include "xls/common/status/status_macros.h"
 #include "xls/contrib/eco/graph.h"
+#include "xls/ir/channel.h"
+#include "xls/ir/channel_ops.h"
 #include "xls/ir/format_strings.h"
 #include "xls/ir/function.h"
 #include "xls/ir/function_base.h"
@@ -38,13 +41,13 @@
 #include "xls/ir/op.h"
 #include "xls/ir/package.h"
 #include "xls/ir/proc.h"
+#include "xls/ir/value.h"
 #include "xls/visualization/ir_viz/node_attribute_visitor.h"
 
 namespace xls {
 namespace {
 
-absl::Status AddStateReadAttributes(
-    Node* node, NodeCostAttributes* attrs) {
+absl::Status AddStateReadAttributes(Node* node, NodeCostAttributes* attrs) {
   if (!node->Is<StateRead>()) {
     return absl::OkStatus();
   }
@@ -85,7 +88,13 @@ absl::StatusOr<NodeCostAttributes> GetNodeCostAttributes(Node* node) {
   if (node->Is<ArrayIndex>()) {
     attrs.array_assumed_in_bounds = node->As<ArrayIndex>()->assumed_in_bounds();
   } else if (node->Is<ArrayUpdate>()) {
-    attrs.array_assumed_in_bounds = node->As<ArrayUpdate>()->assumed_in_bounds();
+    attrs.array_assumed_in_bounds =
+        node->As<ArrayUpdate>()->assumed_in_bounds();
+  }
+  if (node->Is<Param>()) {
+    XLS_ASSIGN_OR_RETURN(
+        attrs.param_index,
+        node->function_base()->GetParamIndex(node->As<Param>()));
   }
   XLS_RETURN_IF_ERROR(AddStateReadAttributes(node, &attrs));
   AddTraceAttributes(node, &attrs);
@@ -109,6 +118,20 @@ EdgeCostAttributes GetEdgeCostAttributes(Node* operand, Node* user,
   return attrs;
 }
 
+ChannelInfo GetChannelInfoFromInterface(const ChannelInterface* interface) {
+  ChannelInfo info;
+  info.name = std::string(interface->name());
+  info.data_type = interface->type()->ToProto();
+  info.kind = ChannelKindToString(interface->kind());
+  info.direction = ChannelDirectionToString(interface->direction());
+  info.flow_control = FlowControlToString(interface->flow_control());
+  if (interface->strictness().has_value()) {
+    info.strictness = ChannelStrictnessToString(*interface->strictness());
+  }
+  info.flop_kind = FlopKindToString(interface->flop_kind());
+  return info;
+}
+
 void SortEdgesAndRefresh(XLSGraph& graph) {
   absl::c_sort(graph.edges, [](const XLSEdge& a, const XLSEdge& b) {
     if (a.endpoints.first != b.endpoints.first) {
@@ -121,6 +144,53 @@ void SortEdgesAndRefresh(XLSGraph& graph) {
   });
   graph.RefreshAdjacency();
   graph.RefreshEdgeCounts();
+}
+
+// Models channels as first-class nodes with synthetic binding edges to their
+// Send/Receive nodes, so channel add/remove/retype are detected and patched
+// through the ordinary node/edge machinery.
+absl::Status AddChannelNodesAndBindings(Proc* proc, XLSGraph& graph) {
+  absl::flat_hash_map<std::string, int> channel_name_to_index;
+  for (const ChannelInterface* interface : proc->interface()) {
+    const ChannelInfo info = GetChannelInfoFromInterface(interface);
+    NodeCostAttributes attrs;
+    attrs.channel = info;
+    XLSNode channel_node(absl::StrCat("chan.", info.name), attrs);
+    channel_node.all_attributes = {
+        {"name", info.name},
+        {"op", "channel"},
+    };
+    channel_name_to_index[info.name] = graph.add_node(channel_node);
+  }
+
+  for (Node* node : proc->nodes()) {
+    std::optional<std::string> channel_name;
+    if (node->Is<Send>()) {
+      channel_name = std::string(node->As<Send>()->channel_name());
+    } else if (node->Is<Receive>()) {
+      channel_name = std::string(node->As<Receive>()->channel_name());
+    }
+    if (!channel_name.has_value()) {
+      continue;
+    }
+    auto it = channel_name_to_index.find(*channel_name);
+    if (it == channel_name_to_index.end()) {
+      continue;
+    }
+    const int channel_index = it->second;
+    XLS_RET_CHECK(graph.node_name_to_index.contains(node->GetName()))
+        << "Missing graph node for channel op " << node->GetName();
+    const int node_index = graph.node_name_to_index.at(node->GetName());
+    EdgeCostAttributes edge_attrs;
+    edge_attrs.channel_binding = true;
+    // Send writes into the channel; the channel feeds Receive.
+    if (node->Is<Send>()) {
+      graph.add_edge(XLSEdge(node_index, channel_index, edge_attrs, 0));
+    } else {
+      graph.add_edge(XLSEdge(channel_index, node_index, edge_attrs, 0));
+    }
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace
@@ -143,9 +213,6 @@ absl::StatusOr<XLSGraph> XlsIrToGraph(FunctionBase* function_base) {
     graph.add_node(graph_node);
   }
 
-  // TODO(xls-eco): Model channels as first-class graph nodes so channel
-  // additions, removals, and type changes are detected by the differencer
-  // instead of requiring the manual fixup documented in test/BUILD.
   for (Node* node : function_base->nodes()) {
     XLS_RET_CHECK(graph.node_name_to_index.contains(node->GetName()))
         << "Missing graph node for IR node " << node->GetName();
@@ -155,9 +222,9 @@ absl::StatusOr<XLSGraph> XlsIrToGraph(FunctionBase* function_base) {
       XLS_RET_CHECK(graph.node_name_to_index.contains(operand->GetName()))
           << "Missing graph node for operand " << operand->GetName();
       const int source = graph.node_name_to_index.at(operand->GetName());
-      graph.add_edge(
-          XLSEdge(source, sink, GetEdgeCostAttributes(operand, node, index),
-                  static_cast<int>(index)));
+      graph.add_edge(XLSEdge(source, sink,
+                             GetEdgeCostAttributes(operand, node, index),
+                             static_cast<int>(index)));
     }
   }
 
@@ -166,6 +233,11 @@ absl::StatusOr<XLSGraph> XlsIrToGraph(FunctionBase* function_base) {
     if (function->return_value() != nullptr) {
       graph.return_node_name = function->return_value()->GetName();
     }
+  }
+  if (function_base->IsProc() &&
+      function_base->AsProcOrDie()->is_new_style_proc()) {
+    XLS_RETURN_IF_ERROR(
+        AddChannelNodesAndBindings(function_base->AsProcOrDie(), graph));
   }
 
   SortEdgesAndRefresh(graph);

@@ -25,10 +25,30 @@
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "xls/ir/channel.pb.h"
 #include "xls/ir/op.h"
 #include "xls/ir/xls_type.pb.h"
 #include "xls/ir/xls_value.pb.h"
 #include "xls/visualization/ir_viz/visualization.pb.h"
+
+// A proc-boundary channel interface, modeled as a first-class graph node.
+// Enum-valued fields use their canonical XLS string forms (round-trippable via
+// the StringTo* helpers) to keep this header off xls/ir/channel.h.
+//
+// TODO(xls-eco): Multi-proc ECO also needs the queue-owning channel objects
+// (supported_ops, initial_values, fifo_config) modeled alongside interfaces.
+struct ChannelInfo {
+  std::string name;
+  std::optional<xls::TypeProto> data_type;
+  std::string kind;
+  std::string direction;
+  std::string flow_control;
+  std::string strictness;
+  std::string flop_kind;
+
+  std::size_t Hash() const;
+  std::string DebugString() const;
+};
 
 struct NodeCostAttributes {
   std::optional<xls::Op> op;
@@ -40,7 +60,12 @@ struct NodeCostAttributes {
   std::optional<std::string> state_element;
   std::optional<xls::ValueProto> state_initial_value;
   std::optional<int64_t> state_index;
+  // Params are positional interface structure: without the ordinal, two
+  // same-typed params are indistinguishable and swapping their uses would
+  // falsely hash as equivalent.
+  std::optional<int64_t> param_index;
   std::optional<std::string> trace_xls_format;
+  std::optional<ChannelInfo> channel;  // Set iff this node models a channel.
 
   std::size_t Hash() const;
   std::string DebugString() const;
@@ -52,6 +77,8 @@ struct EdgeCostAttributes {
   std::optional<xls::Op> sink_op;
   std::optional<xls::TypeProto> sink_data_type;
   std::optional<int64_t> index;
+  // True for synthetic Send<->channel / channel<->Receive binding edges.
+  bool channel_binding = false;
 
   std::size_t Hash() const;
   std::string DebugString() const;
@@ -61,13 +88,12 @@ struct XLSNode {
   std::string name;
   NodeCostAttributes cost_attributes;
   bool pinned = false;
-  int index = -1;                    // current index in graph.nodes
-  std::optional<int> mcs_map_index;  // index in MCS mapping, if mapped
+  int index = -1;                    // Current index in graph.nodes.
+  std::optional<int> mcs_map_index;  // Index in the MCS mapping, if mapped.
   std::vector<std::pair<std::string, std::string>> all_attributes;
-  // label: hash of cost_attributes (node-local label)
+  // Hash of cost_attributes (node-local label).
   std::size_t label = 0;
-  // signature: hash(label, ordered(incoming labels), unordered(outgoing
-  // labels))
+  // hash(label, ordered(incoming labels), unordered(outgoing labels)).
   std::size_t signature = 0;
   std::vector<std::size_t> incoming_labels;
   std::vector<std::size_t> outgoing_labels;
@@ -76,16 +102,16 @@ struct XLSNode {
 };
 
 struct XLSEdge {
-  std::pair<int, int> endpoints;  // source, sink
+  std::pair<int, int> endpoints;  // (source, sink).
   EdgeCostAttributes cost_attributes;
   int index;
-  // label: hash of cost_attributes (edge-local label)
+  // Hash of cost_attributes (edge-local label).
   std::size_t label = 0;
   XLSEdge(int source, int sink, const EdgeCostAttributes& cost_attrs = {},
           int idx = 0);
 };
 
-// Custom hash function for std::pair<int, int>
+// Hasher for std::pair<int, int>.
 struct PairHash {
   std::size_t operator()(const std::pair<int, int>& p) const {
     return std::hash<int>{}(p.first) ^ (std::hash<int>{}(p.second) << 1);
@@ -100,17 +126,17 @@ struct XLSGraph {
   absl::flat_hash_map<std::string, int> node_name_to_index;
   std::optional<std::string> return_node_name;
 
-  // Mapping between current indices and original indices after cutting
-  std::vector<int> original_indices;  // current_index -> original_index
+  // Mapping between current and original indices after cutting.
+  std::vector<int> original_indices;  // current_index -> original_index.
   absl::flat_hash_map<int, int>
-      current_indices;  // original_index -> current_index
+      current_indices;  // original_index -> current_index.
 
   XLSGraph();
-  XLSGraph(const XLSGraph& other) = default;             // Copy constructor
-  XLSGraph& operator=(const XLSGraph& other) = default;  // Copy assignment
+  XLSGraph(const XLSGraph& other) = default;
+  XLSGraph& operator=(const XLSGraph& other) = default;
   bool has_edge(int u, int v, int index) const;
   int count_edges(int u, int v) const;
-  // Convenience: presence-only check
+  // Presence-only overload.
   bool has_edge(int u, int v) const;
   int add_node(const XLSNode& Node);
   int add_edge(const XLSEdge& Edge);
@@ -118,19 +144,20 @@ struct XLSGraph {
   std::vector<int> get_edges_between(int u, int v) const;
   std::vector<int> get_outgoing_neighbors(int node_index) const;
   std::vector<int> get_incoming_neighbors(int node_index) const;
-  // return incoming + outgoing edges in a single vector
+  // Incoming and outgoing neighbors combined.
   std::vector<int> get_neighbors(int node_index) const;
-  // compute node labels (from cost_attributes) and signatures
+  // Computes node labels (from cost_attributes) and signatures.
   void populate_node_signatures();
-  // pin nodes (set pinned=true for specified node indices)
+  // Merkle-based fingerprint of the graph
+  std::vector<std::size_t> StructuralHash() const;
   void PinNodes(const std::vector<int>& node_indices);
-  // cut nodes: remove specified nodes and their connected edges from the graph
+  // Removes the given nodes and their connected edges.
   void Cut(const std::vector<int>& node_indices);
   void RefreshAdjacency();
   void RefreshEdgeCounts();
   void RefreshReturnAndIndex();
-  // validate and clean up edges with missing endpoints
-  void ValidateEdges();
+  // Drops edges with missing endpoints.
+  void RemoveDanglingEdges();
 };
 
 #endif  // XLS_ECO_GRAPH_H_

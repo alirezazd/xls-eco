@@ -263,8 +263,8 @@ absl::Status RealMain(const std::vector<std::string_view>& positional_args,
 
     graph1.Cut(to_cut_g1);
     graph2.Cut(to_cut_g2);
-    graph1.ValidateEdges();
-    graph2.ValidateEdges();
+    graph1.RemoveDanglingEdges();
+    graph2.RemoveDanglingEdges();
     AnnotateMcsMappings(boundary_names, graph1, graph2);
     VLOG(1) << "Post-MCS graph sizes: G1 nodes=" << graph1.nodes.size()
             << " edges=" << graph1.edges.size()
