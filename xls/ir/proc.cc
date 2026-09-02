@@ -201,6 +201,18 @@ std::optional<int64_t> Proc::MaybeGetStateElementIndex(
   return std::nullopt;
 }
 
+absl::Status Proc::MoveStateElement(int64_t from, int64_t to) {
+  XLS_RET_CHECK_LT(from, GetStateElementCount());
+  XLS_RET_CHECK_LT(to, GetStateElementCount());
+  if (from == to) {
+    return absl::OkStatus();
+  }
+  StateElement* element = state_vec_[from];
+  state_vec_.erase(state_vec_.begin() + from);
+  state_vec_.insert(state_vec_.begin() + to, element);
+  return absl::OkStatus();
+}
+
 absl::Status Proc::RemoveStateElement(int64_t index) {
   XLS_RET_CHECK_LT(index, GetStateElementCount());
 
@@ -220,6 +232,9 @@ absl::Status Proc::RemoveStateElement(int64_t index) {
     state_reads_.erase(old_state_read_it);
   }
 
+  XLS_RETURN_IF_ERROR(
+      state_name_uniquer_.ReleaseIdentifier(old_state_element->name()))
+      << "Cannot release name of " << old_state_element->ToString();
   state_elements_.erase(old_state_element->name());
   state_vec_.erase(state_vec_.begin() + index);
   return absl::OkStatus();

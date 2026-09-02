@@ -210,6 +210,11 @@ class Proc : public FunctionBase {
       StateElement* old_state_element, const Value& init_value,
       StateElementTransformer& transform);
 
+  // Moves the state element at index `from` to index `to`, shifting the
+  // elements between them by one. Does not change names, nodes, or state
+  // reads.
+  absl::Status MoveStateElement(int64_t from, int64_t to);
+
   // Remove the state element at the given index. All state elements higher than
   // `index` are shifted down one to fill the hole. The state parameter at the
   // index must have no uses.
