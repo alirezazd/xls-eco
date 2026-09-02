@@ -16,7 +16,6 @@
 #define XLS_ECO_GED_H_
 
 #include <climits>
-#include <functional>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -44,51 +43,8 @@ struct RawCostMatrix {
   void Set(int i, int j, int c) { data[i * n_cols + j] = c; }
 };
 
-struct CostMatrix {
-  RawCostMatrix C;
-  int ls = 0;
-  std::vector<int> lsa_row_ind;
-  std::vector<int> lsa_col_ind;
-};
-
-CostMatrix MakeCostMatrix(const RawCostMatrix& C, int m, int n,
-                          std::vector<std::vector<double>>& dense_buffer);
-
-struct MatchEdgesResult {
-  std::vector<std::pair<int, int>> ij;
-  CostMatrix localCe;
-};
-
-MatchEdgesResult MatchEdges(int u, int v, const std::vector<int>& pending_g,
-                            const std::vector<int>& pending_h,
-                            const CostMatrix& Ce, const XLSGraph& G1,
-                            const XLSGraph& G2,
-                            const std::vector<std::pair<int, int>>& matched_uv,
-                            std::vector<std::vector<double>>& dense_buffer);
-
-CostMatrix ReduceCe(const CostMatrix& Ce,
-                    const std::vector<std::pair<int, int>>& ij, int m, int n,
-                    std::vector<std::vector<double>>& dense_buffer);
-
-struct EditOp {
-  std::pair<int, int> ij;
-  CostMatrix Cv_ij;
-  std::vector<std::pair<int, int>> xy;
-  CostMatrix Ce_xy;
-  int edit_cost;
-};
-
-void GetEditOps(const std::vector<std::pair<int, int>>& matched_uv,
-                const std::vector<int>& pending_u,
-                const std::vector<int>& pending_v, const CostMatrix& Cv,
-                const std::vector<int>& pending_g,
-                const std::vector<int>& pending_h, const CostMatrix& Ce,
-                const XLSGraph& G1, const XLSGraph& G2, int matched_cost,
-                std::function<bool(int64_t)> prune,
-                std::vector<std::vector<double>>& dense_Cv_buffer,
-                std::vector<std::vector<double>>& dense_Ce_buffer,
-                const std::function<void(EditOp&)>& op_callback);
-
+// Result of a rectangular LSAP over a node or edge cost matrix, classified into
+// substitutions (i<m, j<n), deletions (i<m), and insertions (j<n).
 struct AssignmentResult {
   int cost = 0;
   std::vector<std::pair<int, int>> subs;
@@ -96,6 +52,10 @@ struct AssignmentResult {
   std::vector<int> ins;
 };
 
+// Solves the rectangular linear sum assignment problem on the (m+n)x(m+n)
+// cost matrix M (substitution / deletion / insertion / dummy blocks) using the
+// shortest-augmenting-path solver in lap_solver, and classifies the assignment
+// into subs/dels/ins. `dense_buffer` is a reusable scratch buffer.
 AssignmentResult SolveLSAP(const RawCostMatrix& M, int m, int n,
                            std::vector<std::vector<double>>& dense_buffer);
 
@@ -114,11 +74,6 @@ struct EdgeCostFunctions {
 struct GEDOptions {
   NodeCostFunctions nodeCosts;
   EdgeCostFunctions edgeCosts;
-
-  double timeout;
-  bool optimal;
-  int upper_bound = INT_MAX;
-  bool strictly_decreasing = true;
 };
 
 struct GEDResult {
@@ -135,8 +90,52 @@ struct GEDResult {
   int total_cost = INT_MAX;
 };
 
+// Selects how local edge structure is folded into each node-substitution entry
+// of the assignment cost matrix (Blumenthal et al. 2020; see ged.cc). All
+// variants yield a complete, valid edit path; they trade tightness (less patch
+// drift) for speed.
+enum class Method {
+  kNode,        // NODE (Section 5.2.1): node label only, no edge term.
+  kBranch,      // BRANCH (Section 5.2.3): optimal incident-edge LSAPE C_{i,k}.
+  kBranchFast,  // BRANCH-FAST (Section 5.2.4): sorted multiset match (default).
+};
+
+// Computes the graph edit distance between graph1 and graph2 via the LSAPE-GED
+// paradigm (Algorithm 1 of Blumenthal et al., The VLDB Journal 2020; see
+// ged.cc): a single bipartite node assignment whose induced edit path is
+// returned. Runs in polynomial time and returns an UPPER BOUND on the true GED
+// whose induced edit path provably transforms graph1 into graph2 -- correctness
+// is independent of optimality (suboptimality only enlarges the patch) and is
+// certified downstream by the equivalence check.
 GEDResult SolveGED(const XLSGraph& graph1, const XLSGraph& graph2,
-                   const GEDOptions& options);
+                   const GEDOptions& options,
+                   Method method = Method::kBranchFast);
+
+// Utility functions exposed for testing.
+namespace internal {
+
+// Builds the (n+m)x(n+m) LSAPE node-assignment cost matrix (Blumenthal et al.
+// 2020, Section 5.2.3 BRANCH / 5.2.4 BRANCH-FAST). Costs are scaled by 2 so the
+// BRANCH 0.5 half-edge term stays integral. The deletion/insertion blocks
+// absorb node-count imbalance.
+RawCostMatrix BuildLsapeCostMatrix(const XLSGraph& graph1,
+                                   const XLSGraph& graph2,
+                                   const GEDOptions& options, Method method);
+
+// Induces a complete, valid edit path from a node map, per Definition 3
+// (induced edit path) of Blumenthal et al. 2020: matched nodes become
+// substitutions, unmatched graph1/graph2 nodes become deletions/insertions,
+// then every edge is reconciled into an edge substitution / deletion /
+// insertion. `match_g1[i]` is the graph2 node matched to graph1 node i, or -1
+// if i is deleted; `match_g2[j]` is the graph1 node matched to graph2 node j,
+// or -1 if j is inserted. The result covers every node and edge of both graphs
+// exactly once and therefore replays to graph2 exactly.
+GEDResult InduceEditPath(const std::vector<int>& match_g1,
+                         const std::vector<int>& match_g2,
+                         const XLSGraph& graph1, const XLSGraph& graph2,
+                         const GEDOptions& options);
+
+}  // namespace internal
 
 }  // namespace ged
 

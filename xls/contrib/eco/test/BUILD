@@ -120,6 +120,8 @@ xls_dslx_ir_diff(
     ],
     dslx_top = "histogram",
     mcs = True,
+    # The optimal MCS recursion plateaus on this
+    mcs_optimal = False,
 )
 
 xls_dslx_ir_diff(

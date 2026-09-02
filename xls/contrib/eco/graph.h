@@ -60,6 +60,7 @@ struct NodeCostAttributes {
   std::optional<std::string> state_element;
   std::optional<xls::ValueProto> state_initial_value;
   std::optional<int64_t> state_index;
+  std::optional<bool> state_non_synthesizable;
   // Params are positional interface structure: without the ordinal, two
   // same-typed params are indistinguishable and swapping their uses would
   // falsely hash as equivalent.

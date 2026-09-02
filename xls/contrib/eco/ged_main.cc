@@ -115,7 +115,7 @@ constexpr std::string_view kUsage = R"(ged_main - Compute graph edit distance.
 
 Examples:
   ged_main --before_ir=a.ir --after_ir=b.ir
-  ged_main --before_ir=a.ir --after_ir=b.ir --v=2 --timeout=30
+  ged_main --before_ir=a.ir --after_ir=b.ir --v=2
   ged_main --before_ir=a.ir --after_ir=b.ir --patch=patch.bin
 
 Alternately, two positional arguments may be provided for the XLS IR files.)";
@@ -123,7 +123,7 @@ Alternately, two positional arguments may be provided for the XLS IR files.)";
 }  // namespace
 
 ABSL_FLAG(std::string, before_ir, "",
-          "Path to the first (golden) XLS IR file.");
+          "Path to the first (before) XLS IR file.");
 ABSL_FLAG(std::string, after_ir, "",
           "Path to the second (revised) XLS IR file.");
 ABSL_FLAG(bool, use_mcs, true, "Enable MCS preprocessing before GED.");
@@ -135,14 +135,8 @@ ABSL_FLAG(bool, mcs_optimal, true,
           "after a no-improvement plateau.");
 ABSL_FLAG(int, mcs_timeout, -1,
           "Timeout in seconds for MCS preprocessing; negative disables it.");
-ABSL_FLAG(int, timeout, -1,
-          "Timeout in seconds for the GED search (0 = Return the initial "
-          "solution immediately).");
 ABSL_FLAG(std::string, patch, "",
           "Write a serialized IrPatchProto to this path after GED completes.");
-ABSL_FLAG(bool, optimal, false,
-          "Require optimal GED solution (Will override timeout and might take "
-          "a long time to compute).");
 ABSL_FLAG(std::string, report, "",
           "Write execution statistics report to this path.");
 
@@ -169,8 +163,7 @@ void AnnotateMcsMappings(
 absl::Status RealMain(const std::vector<std::string_view>& positional_args,
                       std::string before_ir, std::string after_ir, bool use_mcs,
                       int mcs_cutoff, bool mcs_optimal, int mcs_timeout,
-                      double timeout, bool optimal, std::string patch_path,
-                      std::string report_path) {
+                      std::string patch_path, std::string report_path) {
   if (before_ir.empty() && !positional_args.empty()) {
     before_ir = std::string(positional_args[0]);
   }
@@ -189,8 +182,7 @@ absl::Status RealMain(const std::vector<std::string_view>& positional_args,
             << " use_mcs=" << (use_mcs ? 1 : 0) << " mcs_cutoff=" << mcs_cutoff
             << " mcs_optimal=" << (mcs_optimal ? 1 : 0)
             << (mcs_timeout >= 0 ? absl::StrCat(" mcs_timeout=", mcs_timeout)
-                                 : "")
-            << " timeout=" << timeout << " optimal=" << optimal;
+                                 : "");
 
   XLS_ASSIGN_OR_RETURN(XLSGraph graph1, xls::ParseIrFileToGraph(before_ir));
   XLS_ASSIGN_OR_RETURN(XLSGraph graph2, xls::ParseIrFileToGraph(after_ir));
@@ -281,13 +273,7 @@ absl::Status RealMain(const std::vector<std::string_view>& positional_args,
         100.0 * (1.0 - (double)stats.residual_g1_edges / stats.g1_edges);
   }
 
-  // TODO(xls-eco): Prune unbalanced residuals before GED with a single LSAP
-  // over the residual node sets (reusing lap_solver) to pair compatible
-  // leftovers and expose the rest as pure inserts/deletes, leaving only the
-  // balanced, ambiguous remainder for the exact search.
   ged::GEDOptions options = CreateUserCosts();
-  options.timeout = timeout;
-  options.optimal = optimal;
 
   LOG(INFO) << "Running GED solver";
   xls::Stopwatch ged_stopwatch;
@@ -448,12 +434,10 @@ int main(int argc, char* argv[]) {
   int mcs_cutoff = absl::GetFlag(FLAGS_mcs_cutoff);
   bool mcs_optimal = absl::GetFlag(FLAGS_mcs_optimal);
   int mcs_timeout = absl::GetFlag(FLAGS_mcs_timeout);
-  double timeout = absl::GetFlag(FLAGS_timeout);
-  bool optimal = absl::GetFlag(FLAGS_optimal);
   std::string patch_path = absl::GetFlag(FLAGS_patch);
   std::string report_path = absl::GetFlag(FLAGS_report);
   return xls::ExitStatus(
       RealMain(positional, std::move(before_ir), std::move(after_ir), use_mcs,
-               mcs_cutoff, mcs_optimal, mcs_timeout, timeout, optimal,
-               std::move(patch_path), std::move(report_path)));
+               mcs_cutoff, mcs_optimal, mcs_timeout, std::move(patch_path),
+               std::move(report_path)));
 }

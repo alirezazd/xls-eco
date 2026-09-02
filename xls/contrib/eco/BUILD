@@ -69,8 +69,11 @@ cc_library(
         "@abseil-cpp//absl/container:flat_hash_map",
         "@abseil-cpp//absl/container:flat_hash_set",
         "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/log",
         "@abseil-cpp//absl/status",
         "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/strings:str_format",
         "@abseil-cpp//absl/types:span",
     ],
 )
@@ -138,6 +141,7 @@ cc_library(
         "//xls/ir:format_strings",
         "//xls/ir:ir_parser",
         "//xls/ir:op",
+        "//xls/ir:state_element",
         "//xls/ir:value",
         "//xls/visualization/ir_viz:node_attribute_visitor",
         "@abseil-cpp//absl/algorithm:container",
@@ -197,6 +201,18 @@ cc_test(
     srcs = ["mcs_test.cc"],
     deps = [
         ":mcs",
+        "//xls/common:xls_gunit_main",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "ged_test",
+    size = "small",
+    srcs = ["ged_test.cc"],
+    deps = [
+        ":ged",
+        ":graph",
         "//xls/common:xls_gunit_main",
         "@googletest//:gtest",
     ],
