@@ -58,8 +58,7 @@ void PopulateUniqueArgs(const NodeCostAttributes& attrs,
       break;
     case xls::Op::kOneHot:
       if (node_attributes.has_lsb_prio()) {
-        node_proto->add_unique_args()->set_lsb_prio(
-            node_attributes.lsb_prio());
+        node_proto->add_unique_args()->set_lsb_prio(node_attributes.lsb_prio());
       }
       break;
     case xls::Op::kSignExt:
@@ -99,30 +98,49 @@ void PopulateUniqueArgs(const NodeCostAttributes& attrs,
     case xls::Op::kTrace:
       if (attrs.trace_xls_format.has_value()) {
         node_proto->add_unique_args()->set_format(*attrs.trace_xls_format);
-      } else if (node_attributes.has_format()) {
-        node_proto->add_unique_args()->set_format(node_attributes.format());
       }
       if (node_attributes.has_verbosity()) {
         node_proto->add_unique_args()->set_verbosity(
             node_attributes.verbosity());
       }
       break;
-    case xls::Op::kStateRead:
-      if (attrs.state_index.has_value()) {
-        node_proto->add_unique_args()->set_index(
-            static_cast<uint64_t>(*attrs.state_index));
-      }
+    case xls::Op::kNext:
+      // A Next has no state-read operand; PatchIr binds the element by name.
       if (attrs.state_element.has_value()) {
         node_proto->add_unique_args()->set_state_element(*attrs.state_element);
       }
-      if (attrs.state_initial_value.has_value()) {
-        node_proto->add_unique_args()->mutable_init()->CopyFrom(
-            *attrs.state_initial_value);
+      break;
+    case xls::Op::kStateRead:
+      // Element identity/placement ride on the state-element node; the read
+      // only names its element (like next_value).
+      if (attrs.state_element.has_value()) {
+        node_proto->add_unique_args()->set_state_element(*attrs.state_element);
       }
       break;
     default:
       break;
   }
+}
+
+void ExportChannelProto(const ChannelInfo& info,
+                        xls_eco::ChannelProto* channel_proto) {
+  channel_proto->set_name(info.name);
+  if (info.data_type.has_value()) {
+    channel_proto->mutable_data_type()->CopyFrom(*info.data_type);
+  }
+  channel_proto->set_kind(info.kind);
+  channel_proto->set_direction(info.direction);
+  channel_proto->set_flow_control(info.flow_control);
+  channel_proto->set_strictness(info.strictness);
+  channel_proto->set_flop_kind(info.flop_kind);
+}
+
+void ExportEdgeProto(const XLSGraph& graph, const XLSEdge& edge,
+                     xls_eco::EdgeProto* edge_proto) {
+  edge_proto->set_from_node(graph.nodes[edge.endpoints.first].name);
+  edge_proto->set_to_node(graph.nodes[edge.endpoints.second].name);
+  edge_proto->set_index(edge.index);
+  edge_proto->set_channel_binding(edge.cost_attributes.channel_binding);
 }
 
 void ExportNodeProto(const XLSNode& node, xls_eco::NodeProto* node_proto) {
@@ -137,6 +155,26 @@ void ExportNodeProto(const XLSNode& node, xls_eco::NodeProto* node_proto) {
   for (const xls::TypeProto& operand_data_type : attrs.operand_data_types) {
     node_proto->add_operand_data_types()->CopyFrom(operand_data_type);
   }
+  // Channel nodes carry no xls::Op; tag them with a synthetic "channel" op.
+  if (attrs.channel.has_value()) {
+    node_proto->set_op("channel");
+    ExportChannelProto(*attrs.channel, node_proto->mutable_channel());
+  }
+  // State-element nodes carry no xls::Op; tag them "state_element"
+  // with fixed unique_args [index, state_element, init, non_synthesizable]
+  // (index is placement in the revised layout, not identity).
+  if (!attrs.op.has_value() && attrs.state_element.has_value()) {
+    node_proto->set_op("state_element");
+    node_proto->add_unique_args()->set_index(
+        static_cast<uint64_t>(attrs.state_index.value_or(0)));
+    node_proto->add_unique_args()->set_state_element(*attrs.state_element);
+    if (attrs.state_initial_value.has_value()) {
+      node_proto->add_unique_args()->mutable_init()->CopyFrom(
+          *attrs.state_initial_value);
+    }
+    node_proto->add_unique_args()->set_non_synthesizable(
+        attrs.state_non_synthesizable.value_or(false));
+  }
 
   PopulateUniqueArgs(attrs, node_proto);
 }
@@ -148,100 +186,58 @@ xls_eco::IrPatchProto GenerateIrPatchProto(const XLSGraph& original_graph,
                                            const ged::GEDResult& ged_result) {
   xls_eco::IrPatchProto patch_proto;
   uint32_t id = 0;
+  auto add_edit_path = [&](xls_eco::Operation operation) {
+    auto* edit_path = patch_proto.add_edit_paths();
+    edit_path->set_id(id++);
+    edit_path->set_operation(operation);
+    return edit_path;
+  };
 
-  for (const auto& node_sub : ged_result.node_substitutions) {
-    int original_node_id = node_sub.first;
-    int modified_node_id = node_sub.second;
-    auto edit_path_proto = patch_proto.add_edit_paths();
-    edit_path_proto->set_id(id);
-    edit_path_proto->set_operation(xls_eco::Operation::UPDATE);
-    auto node_edit_path = edit_path_proto->mutable_node_edit_path();
+  for (const auto& [original_node_id, modified_node_id] :
+       ged_result.node_substitutions) {
+    auto* node_edit_path =
+        add_edit_path(xls_eco::Operation::UPDATE)->mutable_node_edit_path();
     ExportNodeProto(original_graph.nodes[original_node_id],
                     node_edit_path->mutable_node());
     ExportNodeProto(modified_graph.nodes[modified_node_id],
                     node_edit_path->mutable_updated_node());
-    id++;
   }
   for (int original_node_id : ged_result.node_deletions) {
-    auto edit_path_proto = patch_proto.add_edit_paths();
-    edit_path_proto->set_id(id);
-    edit_path_proto->set_operation(xls_eco::Operation::DELETE);
-    auto node_edit_path = edit_path_proto->mutable_node_edit_path();
+    auto* edit_path = add_edit_path(xls_eco::Operation::DELETE);
     ExportNodeProto(original_graph.nodes[original_node_id],
-                    node_edit_path->mutable_node());
-    node_edit_path->mutable_node()->set_name(
-        original_graph.nodes[original_node_id].name);
-    id++;
+                    edit_path->mutable_node_edit_path()->mutable_node());
   }
   for (int modified_node_id : ged_result.node_insertions) {
-    auto edit_path_proto = patch_proto.add_edit_paths();
-    edit_path_proto->set_id(id);
-    edit_path_proto->set_operation(xls_eco::Operation::INSERT);
-    auto node_edit_path = edit_path_proto->mutable_node_edit_path();
+    auto* edit_path = add_edit_path(xls_eco::Operation::INSERT);
     ExportNodeProto(modified_graph.nodes[modified_node_id],
-                    node_edit_path->mutable_node());
-    node_edit_path->mutable_node()->set_name(
-        modified_graph.nodes[modified_node_id].name);
-    id++;
+                    edit_path->mutable_node_edit_path()->mutable_node());
   }
-  for (const auto& edge_sub : ged_result.edge_substitutions) {
-    int original_edge_id = edge_sub.first;
-    int modified_edge_id = edge_sub.second;
-    auto edit_path_proto = patch_proto.add_edit_paths();
-    edit_path_proto->set_id(id);
-    edit_path_proto->set_operation(xls_eco::Operation::UPDATE);
-    auto edge_edit_path = edit_path_proto->mutable_edge_edit_path();
-    const XLSEdge& original_edge = original_graph.edges[original_edge_id];
-    const XLSEdge& modified_edge = modified_graph.edges[modified_edge_id];
-    auto edge_proto = edge_edit_path->mutable_edge();
-    edge_proto->set_from_node(
-        original_graph.nodes[original_edge.endpoints.first].name);
-    edge_proto->set_to_node(
-        original_graph.nodes[original_edge.endpoints.second].name);
-    edge_proto->set_index(original_edge.index);
-    auto updated_edge_proto = edge_edit_path->mutable_updated_edge();
-    updated_edge_proto->set_from_node(
-        modified_graph.nodes[modified_edge.endpoints.first].name);
-    updated_edge_proto->set_to_node(
-        modified_graph.nodes[modified_edge.endpoints.second].name);
-    updated_edge_proto->set_index(modified_edge.index);
-    id++;
+  for (const auto& [original_edge_id, modified_edge_id] :
+       ged_result.edge_substitutions) {
+    auto* edge_edit_path =
+        add_edit_path(xls_eco::Operation::UPDATE)->mutable_edge_edit_path();
+    ExportEdgeProto(original_graph, original_graph.edges[original_edge_id],
+                    edge_edit_path->mutable_edge());
+    ExportEdgeProto(modified_graph, modified_graph.edges[modified_edge_id],
+                    edge_edit_path->mutable_updated_edge());
   }
   for (int original_edge_id : ged_result.edge_deletions) {
-    auto edit_path_proto = patch_proto.add_edit_paths();
-    edit_path_proto->set_id(id);
-    edit_path_proto->set_operation(xls_eco::Operation::DELETE);
-    auto edge_edit_path = edit_path_proto->mutable_edge_edit_path();
-    const XLSEdge& original_edge = original_graph.edges[original_edge_id];
-    auto edge_proto = edge_edit_path->mutable_edge();
-    edge_proto->set_from_node(
-        original_graph.nodes[original_edge.endpoints.first].name);
-    edge_proto->set_to_node(
-        original_graph.nodes[original_edge.endpoints.second].name);
-    edge_proto->set_index(original_edge.index);
-    id++;
+    auto* edit_path = add_edit_path(xls_eco::Operation::DELETE);
+    ExportEdgeProto(original_graph, original_graph.edges[original_edge_id],
+                    edit_path->mutable_edge_edit_path()->mutable_edge());
   }
   for (int modified_edge_id : ged_result.edge_insertions) {
-    auto edit_path_proto = patch_proto.add_edit_paths();
-    edit_path_proto->set_id(id);
-    edit_path_proto->set_operation(xls_eco::Operation::INSERT);
-    auto edge_edit_path = edit_path_proto->mutable_edge_edit_path();
-    const XLSEdge& modified_edge = modified_graph.edges[modified_edge_id];
-    auto edge_proto = edge_edit_path->mutable_edge();
-    edge_proto->set_from_node(
-        modified_graph.nodes[modified_edge.endpoints.first].name);
-    edge_proto->set_to_node(
-        modified_graph.nodes[modified_edge.endpoints.second].name);
-    edge_proto->set_index(modified_edge.index);
-    id++;
+    auto* edit_path = add_edit_path(xls_eco::Operation::INSERT);
+    ExportEdgeProto(modified_graph, modified_graph.edges[modified_edge_id],
+                    edit_path->mutable_edge_edit_path()->mutable_edge());
   }
 
   // Always record the return node when present. RestoreReturnNode() needs it
   // whenever the return node was isolated via UPDATE or DELETE, even if the
   // return-node name did not change between the two versions.
   if (modified_graph.return_node_name.has_value()) {
-    auto it =
-        modified_graph.node_name_to_index.find(*modified_graph.return_node_name);
+    auto it = modified_graph.node_name_to_index.find(
+        *modified_graph.return_node_name);
     if (it != modified_graph.node_name_to_index.end()) {
       xls_eco::NodeProto* ret_proto = patch_proto.mutable_return_node();
       ret_proto->set_name(*modified_graph.return_node_name);

@@ -44,7 +44,6 @@ class PatchIr {
  public:
   explicit PatchIr(FunctionBase* function_base, xls_eco::IrPatchProto& patch);
   absl::Status ApplyPatch();
-  absl::Status PrintPatch();
   absl::Status ExportIr(const std::string& export_path) const;
   absl::Status ExportScheduleProto();
   absl::Status PatchSchedule(const PipelineSchedule& schedule);
@@ -69,12 +68,16 @@ class PatchIr {
 
   bool CompareEditPaths(const xls_eco::EditPathProto& lhs,
                         const xls_eco::EditPathProto& rhs);
+  EditPathPriority PriorityOf(const xls_eco::EditPathProto& edit_path) const;
+  // Create/remove a proc-interface channel from its declarative description.
+  absl::Status CreateChannelFromProto(const xls_eco::ChannelProto& channel);
+  absl::Status RemoveChannelFromProto(const xls_eco::ChannelProto& channel);
   absl::StatusOr<std::vector<Node*>> MakeDummyNodes(absl::Span<Type*> types);
   absl::StatusOr<Node*> MakeDummyNode(Type* type);
   absl::StatusOr<int64_t> GetProtoBitCount(const TypeProto& type);
   absl::StatusOr<Node*> ResolveNodeByPatchName(std::string_view patch_name);
-  absl::Status UpdateNodeMaps(Node* n, absl::Span<Node*> dummy_operands,
-                              std::string_view node_name);
+  void UpdateNodeMaps(Node* n, absl::Span<Node*> dummy_operands,
+                      std::string_view node_name);
   absl::Status CleanupDummyNodes(Node* node);
   xls_eco::IrPatchProto patch_;
   std::vector<xls_eco::EditPathProto> sorted_edit_paths_;
@@ -83,16 +86,17 @@ class PatchIr {
   Package* package_;
   std::optional<PipelineSchedule> schedule_;
   absl::flat_hash_map<Node*, std::vector<Node*>> dummy_nodes_map_;
-  absl::flat_hash_map<std::pair<Node*, uint>, uint>
-      commutative_edge_index_map_;
-  // Tracks available slots (dummy operands) on commutative nodes.
-  absl::flat_hash_map<Node*, int64_t> commutative_free_slots_;
+  // Operand-position remaps for non-commutative nodes, recorded by edge
+  // updates and consulted by edge inserts. Commutative edges are index-free.
+  absl::flat_hash_map<std::pair<Node*, int64_t>, int64_t> edge_index_remap_;
   Node* dummy_return_node_ = nullptr;
   absl::flat_hash_map<std::string, std::string> patch_to_ir_node_map_;
+  // Permutes proc state elements into the revised layout after all edit
+  // paths have applied (element inserts append; updates leave position).
+  absl::Status ApplyStateElementLayout();
   absl::Status IsolateReturnNode();
   absl::Status RestoreReturnNode();
   absl::Status ValidatePatch();
-  absl::Status PatchContainsNode(std::string_view node_name);
 };
 
 }  // namespace xls

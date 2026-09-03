@@ -41,36 +41,24 @@
 #include "xls/ir/op.h"
 #include "xls/ir/package.h"
 #include "xls/ir/proc.h"
+#include "xls/ir/state_element.h"
 #include "xls/ir/value.h"
 #include "xls/visualization/ir_viz/node_attribute_visitor.h"
 
 namespace xls {
 namespace {
 
-absl::Status AddStateReadAttributes(Node* node, NodeCostAttributes* attrs) {
-  if (!node->Is<StateRead>()) {
-    return absl::OkStatus();
-  }
-
-  StateRead* state_read = node->As<StateRead>();
-  attrs->state_element = state_read->state_element()->name();
+// Element identity shared by a state read and its state-element node.
+absl::Status AddStateElementAttributes(Proc* proc, StateElement* element,
+                                       NodeCostAttributes* attrs) {
+  attrs->state_element = element->name();
+  attrs->state_non_synthesizable = element->non_synthesizable();
   XLS_ASSIGN_OR_RETURN(attrs->state_initial_value,
-                       state_read->state_element()->initial_value().AsProto());
-  if (node->function_base()->IsProc()) {
-    XLS_ASSIGN_OR_RETURN(
-        int64_t index,
-        node->function_base()->AsProcOrDie()->GetStateElementIndex(
-            state_read->state_element()));
-    attrs->state_index = index;
-  }
+                       element->initial_value().AsProto());
+  // Placement only; not part of the label.
+  XLS_ASSIGN_OR_RETURN(attrs->state_index,
+                       proc->GetStateElementIndex(element));
   return absl::OkStatus();
-}
-
-void AddTraceAttributes(Node* node, NodeCostAttributes* attrs) {
-  if (!node->Is<Trace>()) {
-    return;
-  }
-  attrs->trace_xls_format = StepsToXlsFormatString(node->As<Trace>()->format());
 }
 
 absl::StatusOr<NodeCostAttributes> GetNodeCostAttributes(Node* node) {
@@ -96,8 +84,19 @@ absl::StatusOr<NodeCostAttributes> GetNodeCostAttributes(Node* node) {
         attrs.param_index,
         node->function_base()->GetParamIndex(node->As<Param>()));
   }
-  XLS_RETURN_IF_ERROR(AddStateReadAttributes(node, &attrs));
-  AddTraceAttributes(node, &attrs);
+  // A Next binds its state element as metadata, not an operand, so the graph
+  // has no edge for it; carry the element name in the label instead.
+  if (node->Is<Next>()) {
+    attrs.state_element = node->As<Next>()->state_element()->name();
+  } else if (node->Is<StateRead>()) {
+    XLS_RETURN_IF_ERROR(AddStateElementAttributes(
+        node->function_base()->AsProcOrDie(),
+        node->As<StateRead>()->state_element(), &attrs));
+  }
+  if (node->Is<Trace>()) {
+    attrs.trace_xls_format =
+        StepsToXlsFormatString(node->As<Trace>()->format());
+  }
 
   AttributeVisitor visitor;
   XLS_RETURN_IF_ERROR(node->VisitSingleNode(&visitor));
@@ -118,8 +117,10 @@ EdgeCostAttributes GetEdgeCostAttributes(Node* operand, Node* user,
   return attrs;
 }
 
-ChannelInfo GetChannelInfoFromInterface(const ChannelInterface* interface) {
-  ChannelInfo info;
+// Label for a synthetic channel node (no xls::Op; identity is the channel).
+NodeCostAttributes GetNodeCostAttributes(const ChannelInterface* interface) {
+  NodeCostAttributes attrs;
+  ChannelInfo& info = attrs.channel.emplace();
   info.name = std::string(interface->name());
   info.data_type = interface->type()->ToProto();
   info.kind = ChannelKindToString(interface->kind());
@@ -129,9 +130,20 @@ ChannelInfo GetChannelInfoFromInterface(const ChannelInterface* interface) {
     info.strictness = ChannelStrictnessToString(*interface->strictness());
   }
   info.flop_kind = FlopKindToString(interface->flop_kind());
-  return info;
+  return attrs;
 }
 
+// Label for a synthetic state-element node (no xls::Op; identity is the
+// element: name, type, init, non_synthesizable).
+absl::StatusOr<NodeCostAttributes> GetNodeCostAttributes(
+    Proc* proc, StateElement* element) {
+  NodeCostAttributes attrs;
+  attrs.data_type = element->type()->ToProto();
+  XLS_RETURN_IF_ERROR(AddStateElementAttributes(proc, element, &attrs));
+  return attrs;
+}
+
+// Canonical edge order so patches depend on the graph, not construction order.
 void SortEdgesAndRefresh(XLSGraph& graph) {
   absl::c_sort(graph.edges, [](const XLSEdge& a, const XLSEdge& b) {
     if (a.endpoints.first != b.endpoints.first) {
@@ -152,15 +164,14 @@ void SortEdgesAndRefresh(XLSGraph& graph) {
 absl::Status AddChannelNodesAndBindings(Proc* proc, XLSGraph& graph) {
   absl::flat_hash_map<std::string, int> channel_name_to_index;
   for (const ChannelInterface* interface : proc->interface()) {
-    const ChannelInfo info = GetChannelInfoFromInterface(interface);
-    NodeCostAttributes attrs;
-    attrs.channel = info;
-    XLSNode channel_node(absl::StrCat("chan.", info.name), attrs);
+    const std::string name(interface->name());
+    XLSNode channel_node(absl::StrCat("chan.", name),
+                         GetNodeCostAttributes(interface));
     channel_node.all_attributes = {
-        {"name", info.name},
+        {"name", name},
         {"op", "channel"},
     };
-    channel_name_to_index[info.name] = graph.add_node(channel_node);
+    channel_name_to_index[name] = graph.add_node(channel_node);
   }
 
   for (Node* node : proc->nodes()) {
@@ -188,6 +199,49 @@ absl::Status AddChannelNodesAndBindings(Proc* proc, XLSGraph& graph) {
       graph.add_edge(XLSEdge(node_index, channel_index, edge_attrs, 0));
     } else {
       graph.add_edge(XLSEdge(channel_index, node_index, edge_attrs, 0));
+    }
+  }
+  return absl::OkStatus();
+}
+
+// Models proc state elements as first-class nodes with synthetic binding
+// edges to their reads and next_values, so element add/remove/move carries
+// element identity through ordinary node edits (mirrors channel nodes).
+absl::Status AddStateElementNodesAndBindings(Proc* proc, XLSGraph& graph) {
+  absl::flat_hash_map<std::string, int> element_name_to_index;
+  for (StateElement* element : proc->StateElements()) {
+    XLS_ASSIGN_OR_RETURN(NodeCostAttributes attrs,
+                         GetNodeCostAttributes(proc, element));
+    XLSNode element_node(absl::StrCat("state.", element->name()), attrs);
+    element_node.all_attributes = {
+        {"name", element->name()},
+        {"op", "state_element"},
+    };
+    element_name_to_index[element->name()] = graph.add_node(element_node);
+  }
+
+  for (Node* node : proc->nodes()) {
+    std::optional<std::string> element_name;
+    if (node->Is<StateRead>()) {
+      element_name = node->As<StateRead>()->state_element()->name();
+    } else if (node->Is<Next>()) {
+      element_name = node->As<Next>()->state_element()->name();
+    }
+    if (!element_name.has_value()) {
+      continue;
+    }
+    const int element_index = element_name_to_index.at(*element_name);
+    XLS_RET_CHECK(graph.node_name_to_index.contains(node->GetName()))
+        << "Missing graph node for state op " << node->GetName();
+    const int node_index = graph.node_name_to_index.at(node->GetName());
+    EdgeCostAttributes edge_attrs;
+    edge_attrs.channel_binding = true;  // Generic binding edge; skipped by
+                                        // PatchIr like channel bindings.
+    // The element feeds its read; a next_value writes into the element.
+    if (node->Is<StateRead>()) {
+      graph.add_edge(XLSEdge(element_index, node_index, edge_attrs, 0));
+    } else {
+      graph.add_edge(XLSEdge(node_index, element_index, edge_attrs, 0));
     }
   }
   return absl::OkStatus();
@@ -234,10 +288,12 @@ absl::StatusOr<XLSGraph> XlsIrToGraph(FunctionBase* function_base) {
       graph.return_node_name = function->return_value()->GetName();
     }
   }
-  if (function_base->IsProc() &&
-      function_base->AsProcOrDie()->is_new_style_proc()) {
-    XLS_RETURN_IF_ERROR(
-        AddChannelNodesAndBindings(function_base->AsProcOrDie(), graph));
+  if (function_base->IsProc()) {
+    Proc* proc = function_base->AsProcOrDie();
+    if (proc->is_new_style_proc()) {
+      XLS_RETURN_IF_ERROR(AddChannelNodesAndBindings(proc, graph));
+    }
+    XLS_RETURN_IF_ERROR(AddStateElementNodesAndBindings(proc, graph));
   }
 
   SortEdgesAndRefresh(graph);

@@ -148,7 +148,11 @@ std::size_t NodeCostAttributes::Hash() const {
   seed = HashCombine(seed, HashOptionalValue(array_assumed_in_bounds));
   seed = HashCombine(seed, HashOptionalValue(state_element));
   seed = HashCombine(seed, HashOptionalProto(state_initial_value));
-  seed = HashCombine(seed, HashOptionalValue(state_index));
+  // state_index is not hashed: the name above identifies the element, so a
+  // pure reordering must not churn its read. The index still rides in the
+  // patch, for insert placement only.
+  //seed = HashCombine(seed, HashOptionalValue(state_index));
+  seed = HashCombine(seed, HashOptionalValue(state_non_synthesizable));
   seed = HashCombine(seed, HashOptionalValue(param_index));
   seed = HashCombine(seed, HashOptionalValue(trace_xls_format));
   // Folded only when present so non-channel node labels are unchanged.
@@ -193,6 +197,10 @@ std::string NodeCostAttributes::DebugString() const {
   }
   if (state_index.has_value()) {
     fields.push_back(absl::StrCat("state_index=", *state_index));
+  }
+  if (state_non_synthesizable.has_value()) {
+    fields.push_back(absl::StrCat("state_non_synthesizable=",
+                                  *state_non_synthesizable ? "true" : "false"));
   }
   if (param_index.has_value()) {
     fields.push_back(absl::StrCat("param_index=", *param_index));
