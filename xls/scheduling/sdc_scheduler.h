@@ -66,6 +66,16 @@ class SDCSchedulingModel {
   absl::Status AddIOConstraint(const IOConstraint& constraint);
   absl::Status AddNodeInCycleConstraint(
       const NodeInCycleConstraint& constraint);
+  absl::Status AddSoftNodeInCycleConstraint(
+      const SoftNodeInCycleConstraint& constraint);
+  bool has_soft_constraints() const { return !soft_deviations_.empty(); }
+  // Objective: only the weighted deviation from soft node-in-cycle constraints.
+  void SetSoftDeviationObjective();
+  // Caps each soft deviation at its value in `values` (per-node bounds keep
+  // the LP integral where one summed bound would not); Unbound lifts them.
+  void BoundSoftDeviations(
+      const operations_research::math_opt::VariableMap<double>& values);
+  void UnboundSoftDeviations();
   absl::Status AddDifferenceConstraint(const DifferenceConstraint& constraint);
   absl::Status AddRFSLConstraint(
       const RecvsFirstSendsLastConstraint& constraint);
@@ -207,6 +217,18 @@ class SDCSchedulingModel {
   // `next_value` node and its associated `param`.
   absl::flat_hash_map<Node*, operations_research::math_opt::Variable>
       unwanted_inverse_throughput_var_;
+
+  // Late/early deviation of a soft node-in-cycle constraint: two one-sided
+  // slacks keep every row a difference of two variables, so vertices stay
+  // integral.
+  struct SoftDeviation {
+    operations_research::math_opt::Variable late;
+    operations_research::math_opt::Variable early;
+    double weight;
+  };
+  std::vector<SoftDeviation> soft_deviations_;
+  operations_research::math_opt::LinearExpression SoftDeviationExpression()
+      const;
 
   // A placeholder node to represent an artificial sink node on the
   // data-dependence graph.

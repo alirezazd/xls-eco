@@ -502,6 +502,10 @@ absl::Status SDCSchedulingModel::AddSchedulingConstraint(
     return AddNodeInCycleConstraint(
         std::get<NodeInCycleConstraint>(constraint));
   }
+  if (std::holds_alternative<SoftNodeInCycleConstraint>(constraint)) {
+    return AddSoftNodeInCycleConstraint(
+        std::get<SoftNodeInCycleConstraint>(constraint));
+  }
   if (std::holds_alternative<DifferenceConstraint>(constraint)) {
     return AddDifferenceConstraint(std::get<DifferenceConstraint>(constraint));
   }
@@ -577,6 +581,32 @@ absl::Status SDCSchedulingModel::AddNodeInCycleConstraint(
   VLOG(2) << "Setting node-in-cycle constraint: "
           << absl::StrFormat("cycle[%s] = %d", node->GetName(), cycle);
 
+  return absl::OkStatus();
+}
+
+absl::Status SDCSchedulingModel::AddSoftNodeInCycleConstraint(
+    const SoftNodeInCycleConstraint& constraint) {
+  Node* node = constraint.GetNode();
+  auto it = cycle_var_.find(node);
+  if (it == cycle_var_.end()) {
+    // Untimed or dead-after-synthesis nodes have no cycle to pull.
+    return absl::OkStatus();
+  }
+  double cycle = static_cast<double>(constraint.GetCycle());
+  math_opt::Variable late = model_.AddContinuousVariable(
+      0.0, kInfinity, absl::StrFormat("soft_nic_%s_late", node->GetName()));
+  math_opt::Variable early = model_.AddContinuousVariable(
+      0.0, kInfinity, absl::StrFormat("soft_nic_%s_early", node->GetName()));
+  model_.AddLinearConstraint(
+      late - it->second >= -cycle,
+      absl::StrFormat("soft_nic_%s_late", node->GetName()));
+  model_.AddLinearConstraint(
+      early + it->second >= cycle,
+      absl::StrFormat("soft_nic_%s_early", node->GetName()));
+  soft_deviations_.push_back({late, early, constraint.GetWeight()});
+  VLOG(2) << "Setting soft node-in-cycle constraint: "
+          << absl::StrFormat("cycle[%s] ~ %d (weight %g)", node->GetName(),
+                             constraint.GetCycle(), constraint.GetWeight());
   return absl::OkStatus();
 }
 
@@ -780,6 +810,33 @@ void SDCSchedulingModel::SetObjective(std::optional<double> throughput_weight) {
 }
 
 void SDCSchedulingModel::RemoveObjective() { model_.Minimize(0.0); }
+
+math_opt::LinearExpression SDCSchedulingModel::SoftDeviationExpression() const {
+  math_opt::LinearExpression deviation;
+  for (const SoftDeviation& soft : soft_deviations_) {
+    deviation += soft.weight * soft.late + soft.weight * soft.early;
+  }
+  return deviation;
+}
+
+void SDCSchedulingModel::SetSoftDeviationObjective() {
+  model_.Minimize(SoftDeviationExpression());
+}
+
+void SDCSchedulingModel::BoundSoftDeviations(
+    const math_opt::VariableMap<double>& values) {
+  for (const SoftDeviation& soft : soft_deviations_) {
+    model_.set_upper_bound(soft.late, std::round(values.at(soft.late)));
+    model_.set_upper_bound(soft.early, std::round(values.at(soft.early)));
+  }
+}
+
+void SDCSchedulingModel::UnboundSoftDeviations() {
+  for (const SoftDeviation& soft : soft_deviations_) {
+    model_.set_upper_bound(soft.late, kInfinity);
+    model_.set_upper_bound(soft.early, kInfinity);
+  }
+}
 
 absl::StatusOr<ScheduleCycleMap> SDCSchedulingModel::ExtractResult(
     const math_opt::VariableMap<double>& variable_values) const {
@@ -1418,14 +1475,31 @@ absl::StatusOr<ScheduleCycleMap> SDCScheduler::Schedule(
     model_.SetPipelineLength(min_pipeline_length);
   }
 
+  bool soft_bounded = false;
   if (check_feasibility_) {
     model_.RemoveObjective();
   } else {
+    if (model_.has_soft_constraints()) {
+      // Lexicographic: least deviation from the soft constraints first, then
+      // the regular objective with no node deviating more than it did there.
+      model_.SetSoftDeviationObjective();
+      XLS_ASSIGN_OR_RETURN(math_opt::SolveResult deviation_result,
+                           solver_->Solve({.parameters = solve_parameters_}));
+      if (deviation_result.termination.reason !=
+          math_opt::TerminationReason::kOptimal) {
+        return BuildError(deviation_result, failure_behavior);
+      }
+      model_.BoundSoftDeviations(deviation_result.variable_values());
+      soft_bounded = true;
+    }
     model_.SetObjective(dynamic_throughput_objective_weight_);
   }
 
   XLS_ASSIGN_OR_RETURN(math_opt::SolveResult result,
                        solver_->Solve({.parameters = solve_parameters_}));
+  if (soft_bounded) {
+    model_.UnboundSoftDeviations();
+  }
   if (result.termination.reason == math_opt::TerminationReason::kOptimal ||
       (check_feasibility_ &&
        result.termination.reason == math_opt::TerminationReason::kFeasible)) {

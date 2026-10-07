@@ -327,10 +327,44 @@ class SameChannelConstraint {
   int64_t minimum_latency_;
 };
 
+// Pull the given node toward the given cycle. The scheduler first minimizes
+// the total weighted deviation from all soft constraints, then its regular
+// objective within that optimum; a soft constraint never makes a problem
+// infeasible. Weights must be at least one. Used to preserve an earlier
+// schedule across a design change.
+class SoftNodeInCycleConstraint {
+ public:
+  SoftNodeInCycleConstraint(Node* node, int64_t cycle, double weight)
+      : node_(node), cycle_(cycle), weight_(weight) {}
+
+  Node* GetNode() const { return node_; }
+  int64_t GetCycle() const { return cycle_; }
+  double GetWeight() const { return weight_; }
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink,
+                            const SoftNodeInCycleConstraint& constraint) {
+    absl::Format(&sink, "%s~%d*%g", constraint.GetNode()->GetName(),
+                 constraint.GetCycle(), constraint.GetWeight());
+  }
+
+  friend std::ostream& operator<<(std::ostream& os,
+                                  const SoftNodeInCycleConstraint& constraint) {
+    os << absl::StreamFormat("%v", constraint);
+    return os;
+  }
+
+ private:
+  Node* node_;
+  int64_t cycle_;
+  double weight_;
+};
+
 using SchedulingConstraint =
-    std::variant<IOConstraint, NodeInCycleConstraint, DifferenceConstraint,
-                 RecvsFirstSendsLastConstraint, BackedgeConstraint,
-                 SendThenRecvConstraint, SameChannelConstraint>;
+    std::variant<IOConstraint, NodeInCycleConstraint, SoftNodeInCycleConstraint,
+                 DifferenceConstraint, RecvsFirstSendsLastConstraint,
+                 BackedgeConstraint, SendThenRecvConstraint,
+                 SameChannelConstraint>;
 
 template <typename Sink>
 void AbslStringify(Sink& sink, const SchedulingConstraint& constraint) {
