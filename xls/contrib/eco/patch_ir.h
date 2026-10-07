@@ -17,7 +17,6 @@
 
 #include <cstdint>
 #include <initializer_list>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,7 +35,6 @@
 #include "xls/ir/type.h"
 #include "xls/ir/xls_type.pb.h"
 #include "xls/ir/xls_value.pb.h"
-#include "xls/scheduling/pipeline_schedule.h"
 
 namespace xls {
 
@@ -45,9 +43,10 @@ class PatchIr {
   explicit PatchIr(FunctionBase* function_base, xls_eco::IrPatchProto& patch);
   absl::Status ApplyPatch();
   absl::Status ExportIr(const std::string& export_path) const;
-  absl::Status ExportScheduleProto();
-  absl::Status PatchSchedule(const PipelineSchedule& schedule);
-  absl::StatusOr<PipelineSchedule> GetPatchedSchedule();
+  // Ids survive IR text round trips; names of state reads may not.
+  const absl::flat_hash_set<int64_t>& inserted_node_ids() const {
+    return inserted_node_ids_;
+  }
   enum class EditPathPriority : uint8_t {
     kEdgeDelete,
     kNodeDelete,
@@ -81,10 +80,9 @@ class PatchIr {
   absl::Status CleanupDummyNodes(Node* node);
   xls_eco::IrPatchProto patch_;
   std::vector<xls_eco::EditPathProto> sorted_edit_paths_;
-  absl::flat_hash_set<std::string> inserted_node_names_;
+  absl::flat_hash_set<int64_t> inserted_node_ids_;
   FunctionBase* function_base_;
   Package* package_;
-  std::optional<PipelineSchedule> schedule_;
   absl::flat_hash_map<Node*, std::vector<Node*>> dummy_nodes_map_;
   // Operand-position remaps for non-commutative nodes, recorded by edge
   // updates and consulted by edge inserts. Commutative edges are index-free.

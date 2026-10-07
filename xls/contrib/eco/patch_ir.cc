@@ -26,17 +26,15 @@
 
 #include "absl/algorithm/container.h"
 #include "absl/base/attributes.h"
-#include "absl/flags/flag.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "xls/common/file/filesystem.h"
+#include "xls/common/status/ret_check.h"
 #include "xls/common/status/status_macros.h"
 #include "xls/contrib/eco/ir_patch.pb.h"
-#include "xls/estimators/delay_model/delay_estimator.h"
 #include "xls/ir/channel.h"
 #include "xls/ir/channel_ops.h"
 #include "xls/ir/format_strings.h"
@@ -53,11 +51,6 @@
 #include "xls/ir/value_utils.h"
 #include "xls/ir/xls_type.pb.h"
 #include "xls/ir/xls_value.pb.h"
-#include "xls/scheduling/pipeline_schedule.h"
-#include "xls/scheduling/run_pipeline_schedule.h"
-#include "xls/scheduling/scheduling_options.h"
-#include "xls/tools/codegen_flags.h"
-#include "xls/tools/scheduling_options_flags.h"
 
 namespace xls {
 
@@ -133,7 +126,7 @@ EditPathPriorityMap() {
 }  // namespace
 
 PatchIr::PatchIr(FunctionBase* function_base, xls_eco::IrPatchProto& patch)
-    : patch_(patch), function_base_(function_base), schedule_(std::nullopt) {
+    : patch_(patch), function_base_(function_base) {
   std::copy(patch_.edit_paths().begin(), patch_.edit_paths().end(),
             std::back_inserter(sorted_edit_paths_));
   absl::c_sort(sorted_edit_paths_, [this](const xls_eco::EditPathProto& lhs,
@@ -304,15 +297,13 @@ absl::Status PatchIr::ApplyInsertPath(
     // Appended read-less; reads bind later (insert tier ranks them after) and
     // ApplyStateElementLayout settles the final position.
     XLS_ASSIGN_OR_RETURN(Proc * proc, package_->GetTopAsProc());
-    const std::string& element_name =
-        patch_node.unique_args(1).state_element();
+    const std::string& element_name = patch_node.unique_args(1).state_element();
     XLS_ASSIGN_OR_RETURN(Value init,
                          Value::FromProto(patch_node.unique_args(2).init()));
     XLS_ASSIGN_OR_RETURN(
         StateElement * se,
         proc->AppendUnreadStateElement(
-            element_name, init,
-            patch_node.unique_args(3).non_synthesizable()));
+            element_name, init, patch_node.unique_args(3).non_synthesizable()));
     // Deleted names are released by Proc::RemoveStateElement, so the name
     // must come back verbatim; a uniquified one would diverge from after IR.
     XLS_RET_CHECK_EQ(se->name(), element_name);
@@ -518,10 +509,9 @@ absl::Status PatchIr::ApplyInsertPath(
         dummy_operands.pop_back();
       }
       XLS_ASSIGN_OR_RETURN(Proc * proc, package_->GetTopAsProc());
-      XLS_ASSIGN_OR_RETURN(
-          StateElement * se,
-          proc->GetStateElementByName(
-              patch_node.unique_args(0).state_element()));
+      XLS_ASSIGN_OR_RETURN(StateElement * se,
+                           proc->GetStateElementByName(
+                               patch_node.unique_args(0).state_element()));
       XLS_ASSIGN_OR_RETURN(StateRead * read, proc->AddStateRead(se, predicate));
       n = read;
       break;
@@ -677,7 +667,7 @@ absl::Status PatchIr::ApplyInsertPath(
       return absl::InvalidArgumentError("Invalid operation");
   }
   UpdateNodeMaps(n, all_dummy_operands, patch_node.name());
-  inserted_node_names_.insert(n->GetName());
+  inserted_node_ids_.insert(n->id());
   return absl::OkStatus();
 }
 absl::Status PatchIr::ApplyInsertPath(
@@ -935,65 +925,6 @@ absl::Status PatchIr::ApplyStateElementLayout() {
   return absl::OkStatus();
 }
 
-absl::Status PatchIr::PatchSchedule(const PipelineSchedule& schedule) {
-  XLS_ASSIGN_OR_RETURN(
-      SchedulingOptionsFlagsProto scheduling_options_flags_proto,
-      GetSchedulingOptionsFlagsProto());
-  XLS_ASSIGN_OR_RETURN(
-      SchedulingOptions scheduling_options,
-      SetUpSchedulingOptions(scheduling_options_flags_proto, package_));
-  SchedulingOptions tmp_scheduling_options = scheduling_options;
-  XLS_ASSIGN_OR_RETURN(DelayEstimator * delay_estimator,
-                       SetUpDelayEstimator(scheduling_options_flags_proto));
-  decltype(package_->GetNodeCount()) constraint_count = 0;
-  for (const auto& [node, cycle] : schedule.GetCycleMap()) {
-    if (inserted_node_names_.contains(node->GetName())) {
-      VLOG(1) << "Skipping constraint for newly inserted node "
-              << node->GetName();
-      continue;
-    }
-    if (std::find(function_base_->nodes().begin(),
-                  function_base_->nodes().end(),
-                  node) == function_base_->nodes().end()) {
-      VLOG(1) << "Skipping constraint for node not in IR: "
-              << node->GetName();
-      continue;
-    }
-    if (node->op() == Op::kLiteral) {
-      VLOG(1) << "Skipping constraint for literal " << node->GetName();
-      continue;
-    }
-    tmp_scheduling_options.add_constraint(NodeInCycleConstraint(node, cycle));
-    // check if schedule is feasible; if not, then we need remove the
-    // constraint
-    if (!RunPipelineSchedule(function_base_, *delay_estimator,
-                             tmp_scheduling_options)
-             .ok()) {
-      tmp_scheduling_options.clear_constraints();
-      VLOG(1) << "Skipping constraint for " << node->GetName()
-              << ": schedule infeasible";
-    } else {
-      scheduling_options = tmp_scheduling_options;
-      constraint_count++;
-    }
-    tmp_scheduling_options = scheduling_options;
-    XLS_ASSIGN_OR_RETURN(schedule_,
-                         RunPipelineSchedule(function_base_, *delay_estimator,
-                                             scheduling_options));
-  }
-  XLS_RETURN_IF_ERROR(schedule_->Verify());
-  VLOG(1) << "Schedule constraints kept: " << constraint_count << " of "
-          << package_->GetNodeCount() << " nodes";
-  return absl::OkStatus();
-}
-
-absl::StatusOr<PipelineSchedule> PatchIr::GetPatchedSchedule() {
-  if (schedule_.has_value()) {
-    return schedule_.value();
-  }
-  return absl::InternalError("No schedule found");
-}
-
 absl::Status PatchIr::ExportIr(const std::string& export_path) const {
   std::string ir_data = package_->DumpIr();
   std::ofstream out_file(export_path);
@@ -1003,18 +934,6 @@ absl::Status PatchIr::ExportIr(const std::string& export_path) const {
     return absl::OkStatus();
   }
   return absl::InternalError("Failed to open file: " + export_path);
-}
-absl::Status PatchIr::ExportScheduleProto() {
-  XLS_ASSIGN_OR_RETURN(
-      SchedulingOptionsFlagsProto scheduling_options_flags_proto,
-      GetSchedulingOptionsFlagsProto());
-  XLS_ASSIGN_OR_RETURN(DelayEstimator * delay_estimator,
-                       SetUpDelayEstimator(scheduling_options_flags_proto));
-  XLS_ASSIGN_OR_RETURN(PipelineScheduleProto schedule_proto,
-                       schedule_->ToProto(*delay_estimator));
-  XLS_RETURN_IF_ERROR(SetTextProtoFile(
-      absl::GetFlag(FLAGS_output_schedule_path), schedule_proto));
-  return absl::OkStatus();
 }
 PatchIr::EditPathPriority PatchIr::PriorityOf(
     const xls_eco::EditPathProto& edit_path) const {

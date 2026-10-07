@@ -28,15 +28,12 @@
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "absl/time/time.h"
 #include "xls/common/exit_status.h"
 #include "xls/common/init_xls.h"
 #include "xls/common/status/status_macros.h"
-#include "xls/common/stopwatch.h"
 #include "xls/contrib/eco/ged.h"
-#include "xls/contrib/eco/ged_cost_functions.h"
 #include "xls/contrib/eco/ir_patch_gen.h"
-#include "xls/contrib/eco/mcs.h"
+#include "xls/contrib/eco/match.h"
 #include "xls/contrib/eco/xls_ir_to_graph.h"
 
 namespace {
@@ -142,24 +139,6 @@ ABSL_FLAG(std::string, report, "",
 
 namespace {
 
-void AnnotateMcsMappings(
-    const std::vector<std::pair<std::string, std::string>>& boundary_pairs,
-    XLSGraph& graph1, XLSGraph& graph2) {
-  for (const auto& [g1_name, g2_name] : boundary_pairs) {
-    auto g1_it = graph1.node_name_to_index.find(g1_name);
-    auto g2_it = graph2.node_name_to_index.find(g2_name);
-    if (g1_it == graph1.node_name_to_index.end() ||
-        g2_it == graph2.node_name_to_index.end()) {
-      VLOG(1) << "Skip MCS map annotation for pair (" << g1_name << ", "
-              << g2_name << ") because one node is missing post-cut";
-      continue;
-    }
-    graph1.nodes[g1_it->second].mcs_map_index = g2_it->second;
-    graph2.nodes[g2_it->second].mcs_map_index = g1_it->second;
-    VLOG(2) << "Annotated MCS pair: " << g1_name << " <-> " << g2_name;
-  }
-}
-
 absl::Status RealMain(const std::vector<std::string_view>& positional_args,
                       std::string before_ir, std::string after_ir, bool use_mcs,
                       int mcs_cutoff, bool mcs_optimal, int mcs_timeout,
@@ -198,71 +177,18 @@ absl::Status RealMain(const std::vector<std::string_view>& positional_args,
           << " | G2 nodes=" << graph2.nodes.size()
           << " edges=" << graph2.edges.size();
 
+  xls::MatchOptions match_options;
+  match_options.use_mcs = use_mcs;
+  match_options.mcs_cutoff = mcs_cutoff;
+  match_options.mcs_optimal = mcs_optimal;
+  match_options.mcs_timeout = mcs_timeout;
+  xls::MatchResult match = xls::MatchGraphs(graph1, graph2, match_options);
   if (use_mcs) {
-    LOG(INFO) << "MCS preprocessing enabled";
-    xls::Stopwatch mcs_stopwatch;
-    mcs::MCSResult mcs =
-        mcs::SolveMCS(graph1, graph2, mcs_cutoff, mcs_optimal, mcs_timeout);
-    stats.mcs_runtime_sec =
-        absl::ToDoubleSeconds(mcs_stopwatch.GetElapsedTime());
-
-    stats.mcs_matched_nodes = mcs.mapping.size();
-    stats.mcs_matched_edges = mcs.edge_size;
-
-    auto boundary_nodes = GetBoundaryNodes(mcs, graph1, graph2);
-    std::vector<int> boundary_g1_indices;
-    std::vector<int> boundary_g2_indices;
-    std::vector<std::pair<std::string, std::string>> boundary_names;
-    boundary_g1_indices.reserve(boundary_nodes.size());
-    boundary_g2_indices.reserve(boundary_nodes.size());
-    boundary_names.reserve(boundary_nodes.size());
-    for (const auto& [u, v] : boundary_nodes) {
-      std::string g1_name = (u >= 0 && u < (int)graph1.nodes.size())
-                                ? graph1.nodes[u].name
-                                : "<invalid>";
-      std::string g2_name = (v >= 0 && v < (int)graph2.nodes.size())
-                                ? graph2.nodes[v].name
-                                : "<invalid>";
-      VLOG(2) << "Pin boundary pair: G1 idx=" << u << " name=" << g1_name
-              << " G2 idx=" << v << " name=" << g2_name;
-      boundary_g1_indices.push_back(u);
-      boundary_g2_indices.push_back(v);
-      boundary_names.emplace_back(g1_name, g2_name);
-    }
-    graph1.PinNodes(boundary_g1_indices);
-    graph2.PinNodes(boundary_g2_indices);
-    VLOG(1) << "Pinned boundary nodes: " << boundary_nodes.size();
-
-    stats.mcs_boundary_nodes = boundary_nodes.size();
-    int boundary_edges = 0;
-    for (const auto& e : graph1.edges) {
-      for (const auto& idx : boundary_g1_indices) {
-        if (e.endpoints.first == idx || e.endpoints.second == idx) {
-          boundary_edges++;
-          break;
-        }
-      }
-    }
-    stats.mcs_boundary_edges = boundary_edges;
-
-    std::vector<int> to_cut_g1, to_cut_g2;
-    for (const auto& [u, v] : mcs.mapping) {
-      if (!graph1.nodes[u].pinned) to_cut_g1.push_back(u);
-      if (!graph2.nodes[v].pinned) to_cut_g2.push_back(v);
-    }
-    VLOG(2) << "Cut candidates: G1=" << to_cut_g1.size()
-            << " G2=" << to_cut_g2.size();
-
-    graph1.Cut(to_cut_g1);
-    graph2.Cut(to_cut_g2);
-    graph1.RemoveDanglingEdges();
-    graph2.RemoveDanglingEdges();
-    AnnotateMcsMappings(boundary_names, graph1, graph2);
-    VLOG(1) << "Post-MCS graph sizes: G1 nodes=" << graph1.nodes.size()
-            << " edges=" << graph1.edges.size()
-            << " | G2 nodes=" << graph2.nodes.size()
-            << " edges=" << graph2.edges.size();
-
+    stats.mcs_runtime_sec = match.stats.mcs_runtime_sec;
+    stats.mcs_matched_nodes = match.stats.mcs_matched_nodes;
+    stats.mcs_matched_edges = match.stats.mcs_matched_edges;
+    stats.mcs_boundary_nodes = match.stats.mcs_boundary_nodes;
+    stats.mcs_boundary_edges = match.stats.mcs_boundary_edges;
     stats.residual_g1_nodes = graph1.nodes.size();
     stats.residual_g1_edges = graph1.edges.size();
     stats.residual_g2_nodes = graph2.nodes.size();
@@ -272,13 +198,8 @@ absl::Status RealMain(const std::vector<std::string_view>& positional_args,
     stats.mcs_edges_pruned_pct =
         100.0 * (1.0 - (double)stats.residual_g1_edges / stats.g1_edges);
   }
-
-  ged::GEDOptions options = CreateUserCosts();
-
-  LOG(INFO) << "Running GED solver";
-  xls::Stopwatch ged_stopwatch;
-  ged::GEDResult result = ged::SolveGED(graph1, graph2, options);
-  stats.ged_runtime_sec = absl::ToDoubleSeconds(ged_stopwatch.GetElapsedTime());
+  const ged::GEDResult& result = match.ged;
+  stats.ged_runtime_sec = match.stats.ged_runtime_sec;
 
   stats.ged_total_cost = result.total_cost;
   stats.ged_node_dels = result.node_deletions.size();
