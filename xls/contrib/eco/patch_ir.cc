@@ -52,12 +52,13 @@
 #include "xls/ir/value.h"
 #include "xls/ir/value_utils.h"
 #include "xls/ir/xls_type.pb.h"
-#include "xls/ir/xls_value.pb.h"
 #include "xls/scheduling/pipeline_schedule.h"
+#include "xls/scheduling/pipeline_schedule.pb.h"
 #include "xls/scheduling/run_pipeline_schedule.h"
 #include "xls/scheduling/scheduling_options.h"
 #include "xls/tools/codegen_flags.h"
 #include "xls/tools/scheduling_options_flags.h"
+#include "xls/tools/scheduling_options_flags.pb.h"
 
 namespace xls {
 

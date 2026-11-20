@@ -15,6 +15,7 @@
 load("@protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@protobuf//bazel:proto_library.bzl", "proto_library")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(
@@ -64,6 +65,7 @@ cc_library(
         "//xls/scheduling:scheduling_options",
         "//xls/tools:codegen_flags",
         "//xls/tools:scheduling_options_flags",
+        "//xls/tools:scheduling_options_flags_cc_proto",
         "@abseil-cpp//absl/algorithm:container",
         "@abseil-cpp//absl/base:core_headers",
         "@abseil-cpp//absl/container:flat_hash_map",
@@ -146,6 +148,7 @@ cc_library(
         "//xls/visualization/ir_viz:node_attribute_visitor",
         "@abseil-cpp//absl/algorithm:container",
         "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/status",
         "@abseil-cpp//absl/status:statusor",
         "@abseil-cpp//absl/strings",
     ],
@@ -200,8 +203,10 @@ cc_test(
     size = "small",
     srcs = ["mcs_test.cc"],
     deps = [
+        ":graph",
         ":mcs",
         "//xls/common:xls_gunit_main",
+        "//xls/ir:op",
         "@googletest//:gtest",
     ],
 )
@@ -297,6 +302,7 @@ cc_library(
         ":graph",
         ":ir_patch_cc_proto",
         "//xls/ir:op",
+        "//xls/visualization/ir_viz:visualization_cc_proto",
     ],
 )
 
@@ -305,6 +311,8 @@ cc_binary(
     srcs = ["ged_main.cc"],
     deps = [
         ":ged",
+        ":graph",
+        ":ir_patch_cc_proto",
         ":ir_patch_gen_lib",
         ":mcs",
         ":xls_ir_to_graph",

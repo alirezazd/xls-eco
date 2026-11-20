@@ -35,7 +35,6 @@
 #include "xls/ir/package.h"
 #include "xls/ir/type.h"
 #include "xls/ir/xls_type.pb.h"
-#include "xls/ir/xls_value.pb.h"
 #include "xls/scheduling/pipeline_schedule.h"
 
 namespace xls {

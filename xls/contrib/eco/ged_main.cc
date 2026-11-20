@@ -14,6 +14,7 @@
 
 #include <sys/resource.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -21,6 +22,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "absl/flags/flag.h"
@@ -35,16 +37,18 @@
 #include "xls/common/stopwatch.h"
 #include "xls/contrib/eco/ged.h"
 #include "xls/contrib/eco/ged_cost_functions.h"
+#include "xls/contrib/eco/graph.h"
+#include "xls/contrib/eco/ir_patch.pb.h"
 #include "xls/contrib/eco/ir_patch_gen.h"
 #include "xls/contrib/eco/mcs.h"
 #include "xls/contrib/eco/xls_ir_to_graph.h"
 
 namespace {
 
-long GetRSSBytes() {
+int64_t GetRSSBytes() {
   struct rusage usage;
   getrusage(RUSAGE_SELF, &usage);
-  return usage.ru_maxrss * 1024L;
+  return int64_t{usage.ru_maxrss} * 1024;
 }
 
 struct ExecutionStats {
@@ -73,7 +77,7 @@ struct ExecutionStats {
   int ged_edge_dels = 0;
   int ged_edge_ins = 0;
   int ged_edge_subs = 0;
-  long ged_rss_peak_bytes = 0;
+  int64_t ged_rss_peak_bytes = 0;
 
   std::string ToString(bool use_mcs) const {
     std::ostringstream os;
