@@ -97,6 +97,10 @@ class ConstraintConverter {
     node_constraints_.emplace_back(nic);
     return absl::OkStatus();
   }
+  absl::Status AddSpecificConstraint(const SoftNodeInCycleConstraint&) {
+    // Soft constraints only shape the objective; they never bound a node.
+    return absl::OkStatus();
+  }
   absl::Status AddSpecificConstraint(const IOConstraint& io) {
     XLS_RET_CHECK(fb_->IsProc());
     XLS_RET_CHECK_GE(io.MinimumLatency(), 0);

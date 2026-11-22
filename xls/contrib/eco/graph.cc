@@ -28,6 +28,8 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "xls/ir/op.h"
+#include "xls/ir/xls_type.pb.h"
+#include "xls/ir/xls_value.pb.h"
 
 namespace {
 
@@ -258,7 +260,7 @@ XLSEdge::XLSEdge(int source, int sink, const EdgeCostAttributes& cost_attrs,
       index(idx),
       label(cost_attributes.Hash()) {}
 
-XLSGraph::XLSGraph() {}
+XLSGraph::XLSGraph() = default;
 
 int XLSGraph::add_node(const XLSNode& node) {
   int node_index = nodes.size();
@@ -337,7 +339,9 @@ std::vector<const XLSEdge*> XLSGraph::get_node_edges(int node_index) const {
 std::vector<int> XLSGraph::get_edges_between(int u, int v) const {
   std::vector<int> result;
   auto it = node_edges.find(u);
-  if (it == node_edges.end()) return result;
+  if (it == node_edges.end()) {
+    return result;
+  }
 
   for (int edge_idx : it->second) {
     const XLSEdge& edge = edges[edge_idx];
@@ -388,7 +392,9 @@ std::vector<int> XLSGraph::get_neighbors(int node_index) const {
 
 bool XLSGraph::has_edge(int u, int v, int index /* = -1 */) const {
   auto it = node_edges.find(u);
-  if (it == node_edges.end()) return false;
+  if (it == node_edges.end()) {
+    return false;
+  }
 
   for (int edge_idx : it->second) {
     const XLSEdge& e = edges[edge_idx];
@@ -403,7 +409,9 @@ bool XLSGraph::has_edge(int u, int v) const { return has_edge(u, v, -1); }
 
 int XLSGraph::count_edges(int u, int v) const {
   auto it = node_edges.find(u);
-  if (it == node_edges.end()) return 0;
+  if (it == node_edges.end()) {
+    return 0;
+  }
 
   int count = 0;
   for (int edge_idx : it->second) {
@@ -518,12 +526,16 @@ std::vector<std::size_t> XLSGraph::StructuralHash() const {
   std::vector<int> order;
   order.reserve(n);
   for (int i = 0; i < n; ++i) {
-    if (indegree[i] == 0) order.push_back(i);
+    if (indegree[i] == 0) {
+      order.push_back(i);
+    }
   }
   for (std::size_t head = 0; head < order.size(); ++head) {
     const int u = order[head];
     auto it = node_edges.find(u);
-    if (it == node_edges.end()) continue;
+    if (it == node_edges.end()) {
+      continue;
+    }
     for (int edge_idx : it->second) {
       const XLSEdge& e = edges[edge_idx];
       if (e.endpoints.first != u) continue;  // outgoing (user) edges only
@@ -538,7 +550,9 @@ std::vector<std::size_t> XLSGraph::StructuralHash() const {
     std::vector<bool> ordered(n, false);
     for (int u : order) ordered[u] = true;
     for (int i = 0; i < n; ++i) {
-      if (!ordered[i]) order.push_back(i);
+      if (!ordered[i]) {
+        order.push_back(i);
+      }
     }
   }
 
@@ -626,7 +640,9 @@ void XLSGraph::Cut(const std::vector<int>& node_indices) {
   std::vector<int> old_to_new(nodes.size(), -1);
 
   for (int i = 0; i < (int)nodes.size(); ++i) {
-    if (to_remove.count(i)) continue;
+    if (to_remove.count(i)) {
+      continue;
+    }
     old_to_new[i] = (int)new_nodes.size();
     new_nodes.emplace_back(std::move(nodes[i]));
   }
@@ -721,8 +737,9 @@ void XLSGraph::RemoveDanglingEdges() {
               edges.end());
 
   int removed = before - (int)edges.size();
-  if (removed > 0)
+  if (removed > 0) {
     VLOG(1) << "RemoveDanglingEdges: removed " << removed << " invalid edges.";
+  }
 
   RefreshAdjacency();
   RefreshEdgeCounts();
